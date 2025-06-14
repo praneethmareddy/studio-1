@@ -9,7 +9,7 @@ import ChatMessage from '@/components/chat/ChatMessage';
 import TopicSuggestion from '@/components/chat/TopicSuggestion';
 import VideoPlayer from '@/components/chat/VideoPlayer';
 import CallControls from '@/components/chat/CallControls';
-import type { Message, Participant, StreamParticipant } from '@/types';
+import type { Message, StreamParticipant } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,8 +29,6 @@ export default function RoomPage() {
   const [localParticipantId, setLocalParticipantId] = useState<string | null>(null);
   
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  // allParticipants and streamParticipants state related to Firebase is removed.
-  // Real-time participant updates will need a new backend (e.g. WebSockets + MongoDB).
   const [streamParticipants, setStreamParticipants] = useState<StreamParticipant[]>([]);
 
 
@@ -49,18 +47,26 @@ export default function RoomPage() {
       setMessages([
         { 
           id: 'system-welcome', 
-          text: `Welcome to Room ${roomId}! Join the call or start chatting. MongoDB is configured, but real-time participant updates are not implemented.`, 
+          text: `Welcome to Room ${roomId}! Join the call or start chatting. MongoDB is configured, but real-time participant and chat message updates are not yet implemented. Chat messages are currently local only.`, 
           sender: 'system', 
           timestamp: new Date(),
           roomId: roomId,
         }
       ]);
+      // TODO: Fetch initial messages for the room from your MongoDB backend API
     }
     
-    // Cleanup related to Firebase is removed.
-    // New cleanup logic for MongoDB/WebSockets would be different.
+    // TODO: If using WebSockets for real-time messages, connect here and set up listeners.
+    // Example:
+    // const socket = io('/your-chat-namespace');
+    // socket.emit('joinRoom', roomId);
+    // socket.on('newMessage', (newMessage) => {
+    //   setMessages(prevMessages => [...prevMessages, newMessage]);
+    // });
+
     return () => {
-      // Placeholder for future cleanup if needed
+      // TODO: Disconnect WebSocket if used
+      // socket.disconnect();
     };
   }, [roomId]);
 
@@ -90,12 +96,12 @@ export default function RoomPage() {
       setIsMicEnabled(true);
       setIsVideoEnabled(true);
 
-      // Logic for adding participant to Firebase is removed.
-      // This would be replaced by calls to your new MongoDB backend via API/WebSockets.
+      // TODO: Send participant join event to your MongoDB backend via API/WebSockets
+      // This would typically involve signaling for WebRTC as well.
 
       const localPStream: StreamParticipant = {
         id: localParticipantId,
-        name: 'You',
+        name: 'You', // In a real app, get this from user input or auth
         stream: stream,
         isLocal: true,
         isAudioEnabled: true,
@@ -117,26 +123,20 @@ export default function RoomPage() {
   };
 
   const leaveCall = useCallback(async () => {
-    // Logic for removing participant from Firebase is removed.
-    // This would be replaced by calls to your new MongoDB backend.
+    // TODO: Send participant leave event to your MongoDB backend via API/WebSockets
     
     cleanupStream(localStream);
-    // In a full WebRTC app, you would also clean up all peer connections here
-    // For now, just clear local stream representation
     setLocalStream(null);
     setStreamParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-  }, [localStream]); // Dependencies updated
+  }, [localStream, localParticipantId, roomId]); 
 
   useEffect(() => {
-    // This effect ensures that if the component unmounts (e.g. user navigates away),
-    // we attempt to clean up local media.
     return () => { 
       if (isCallActive) {
         cleanupStream(localStream);
       }
-      // Cleanup of remote streams is not relevant here without signaling
     };
   }, [isCallActive, localStream]);
 
@@ -149,7 +149,7 @@ export default function RoomPage() {
         audioTracks.forEach(track => track.enabled = newMicState);
         setIsMicEnabled(newMicState);
         
-        // Update to MongoDB backend would go here
+        // TODO: Update mic status to MongoDB backend via API/WebSockets for other users to see
         setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isAudioEnabled: newMicState} : p));
       }
     }
@@ -163,24 +163,47 @@ export default function RoomPage() {
         videoTracks.forEach(track => track.enabled = newVideoState);
         setIsVideoEnabled(newVideoState);
 
-        // Update to MongoDB backend would go here
+        // TODO: Update video status to MongoDB backend via API/WebSockets
         setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isVideoEnabled: newVideoState} : p));
       }
     }
   };
   
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
     if (!localParticipantId) return;
     const newMessage: Message = {
-      id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, // Temporary client-side ID
       text,
-      sender: 'user', 
+      sender: 'user', // In a real app, this might be more dynamic or based on auth
       timestamp: new Date(),
       roomId,
       userId: localParticipantId, 
     };
+    
+    // Optimistically update local state
     setMessages(prevMessages => [...prevMessages, newMessage]);
-    // Saving messages to MongoDB would happen here, via an API call.
+
+    // TODO: Send message to your MongoDB backend API
+    // Example:
+    // try {
+    //   const response = await fetch('/api/chat/messages', {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify({ roomId, userId: localParticipantId, text }),
+    //   });
+    //   if (!response.ok) {
+    //     // Handle error, maybe revert optimistic update or show toast
+    //     console.error('Failed to send message');
+    //     toast({ title: 'Error', description: 'Failed to send message.', variant: 'destructive' });
+    //     // Revert: setMessages(prev => prev.filter(m => m.id !== newMessage.id));
+    //   }
+    //   // If using WebSockets, the backend would broadcast this message,
+    //   // and the local client would receive it via its WebSocket listener,
+    //   // potentially avoiding duplicate messages if handled correctly.
+    // } catch (error) {
+    //   console.error('Error sending message:', error);
+    //   toast({ title: 'Error', description: 'Could not send message.', variant: 'destructive' });
+    // }
   };
 
   if (!mounted || !roomId) {
@@ -229,9 +252,8 @@ export default function RoomPage() {
             </div>
           ) : (
             <>
-              {/* Participant count from Firebase is removed. This needs new backend logic. */}
               <div className="mb-2 text-sm text-muted-foreground">
-                In call. (Participant list display requires backend integration with MongoDB/WebSockets)
+                In call. (Participant list and remote video/audio display requires backend integration with MongoDB & WebSockets/WebRTC).
               </div>
               <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in">
                 {streamParticipants.find(p => p.isLocal && p.stream) && (
@@ -243,13 +265,12 @@ export default function RoomPage() {
                     isVideoEnabled={streamParticipants.find(p => p.isLocal)!.isVideoEnabled}
                   />
                 )}
-                {/* Placeholder for remote streams - requires full WebRTC and signaling backend */}
                  <div className="bg-muted/70 rounded-lg flex flex-col items-center justify-center text-muted-foreground aspect-video p-4 animate-pulse border border-border/30">
                      <Users className="w-12 h-12 md:w-16 md:h-16 opacity-60 mb-3" />
                      <p className="text-sm md:text-base text-center">
                        Waiting for remote video/audio connection...
                      </p>
-                     <p className="text-xs mt-1"> (Full video connection requires WebRTC offer/answer exchange with a signaling server - not yet implemented with MongoDB) </p>
+                     <p className="text-xs mt-1"> (Full video connection requires WebRTC offer/answer exchange via a signaling server connected to MongoDB - not yet implemented) </p>
                  </div>
               </div>
               <CallControls
@@ -280,6 +301,7 @@ export default function RoomPage() {
             </div>
             <div ref={messagesEndRef} />
           </ScrollArea>
+          {/* ChatInput now indicates that sending a message would ideally go to a backend */}
           <ChatInput onSendMessage={handleSendMessage} /> 
           
           <div className="border-t border-border/50">
@@ -290,3 +312,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
