@@ -15,10 +15,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Video as VideoIcon, Users, AlertTriangle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { database } from '@/lib/firebase'; // Firebase integration
-import { ref, onValue, set, onDisconnect, remove, serverTimestamp } from 'firebase/database'; // Firebase RTDB functions
 
-// Helper to generate a unique ID for participants
+// Helper to generate a unique ID for participants (can be kept client-side for now)
 const generateParticipantId = () => `participant-${Math.random().toString(36).substring(2, 11)}`;
 
 export default function RoomPage() {
@@ -29,11 +27,11 @@ export default function RoomPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const [localParticipantId, setLocalParticipantId] = useState<string | null>(null);
-  const localParticipantIdRef = useRef<string | null>(null); // Ref to hold current participantId for cleanup
-
+  
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [allParticipants, setAllParticipants] = useState<Participant[]>([]); // All participants from Firebase
-  const [streamParticipants, setStreamParticipants] = useState<StreamParticipant[]>([]); // Participants with active streams (local + remote)
+  // allParticipants and streamParticipants state related to Firebase is removed.
+  // Real-time participant updates will need a new backend (e.g. WebSockets + MongoDB).
+  const [streamParticipants, setStreamParticipants] = useState<StreamParticipant[]>([]);
 
 
   const [isCallActive, setIsCallActive] = useState(false);
@@ -46,13 +44,12 @@ export default function RoomPage() {
     setMounted(true);
     const newParticipantId = generateParticipantId();
     setLocalParticipantId(newParticipantId);
-    localParticipantIdRef.current = newParticipantId; // Store in ref for cleanup
 
     if (roomId) {
       setMessages([
         { 
           id: 'system-welcome', 
-          text: `Welcome to Room ${roomId}! Join the call or start chatting.`, 
+          text: `Welcome to Room ${roomId}! Join the call or start chatting. MongoDB is configured, but real-time participant updates are not implemented.`, 
           sender: 'system', 
           timestamp: new Date(),
           roomId: roomId,
@@ -60,59 +57,12 @@ export default function RoomPage() {
       ]);
     }
     
-    // Firebase cleanup on unmount
+    // Cleanup related to Firebase is removed.
+    // New cleanup logic for MongoDB/WebSockets would be different.
     return () => {
-      if (roomId && localParticipantIdRef.current) {
-        const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantIdRef.current}`);
-        remove(participantRef);
-      }
+      // Placeholder for future cleanup if needed
     };
   }, [roomId]);
-
-  // Subscribe to participants changes in Firebase
-  useEffect(() => {
-    if (!roomId || !isCallActive || !localParticipantId) return;
-
-    const participantsRef = ref(database, `rooms/${roomId}/participants`);
-    const unsubscribe = onValue(participantsRef, (snapshot) => {
-      const participantsData = snapshot.val();
-      const fetchedParticipants: Participant[] = [];
-      if (participantsData) {
-        Object.keys(participantsData).forEach(key => {
-          if (key !== localParticipantId) { // Exclude local participant from this list initially
-            fetchedParticipants.push({ id: key, ...participantsData[key] });
-          }
-        });
-      }
-      setAllParticipants(fetchedParticipants);
-      // Basic update to streamParticipants - more complex WebRTC logic would update this based on connections
-      // For now, we'll just show our local stream and placeholders if others are detected
-      if (localStream) {
-        const localParticipantStream: StreamParticipant = {
-          id: localParticipantId,
-          name: 'You (Me)', // Placeholder name
-          stream: localStream,
-          isLocal: true,
-          isAudioEnabled: isMicEnabled,
-          isVideoEnabled: isVideoEnabled,
-        };
-         // Combine local stream with dummy remote streams for now
-        const currentStreamParticipants = [localParticipantStream];
-        
-        // Placeholder for remote participants based on 'allParticipants'
-        // In a real app, this would be driven by successful WebRTC connections
-        fetchedParticipants.forEach(p => {
-          // This is a placeholder. Real remote streams would be added via WebRTC.
-          // For now, we'll just acknowledge their presence without a stream.
-          // To actually display remote videos, WebRTC peer connections are needed.
-        });
-        setStreamParticipants(currentStreamParticipants);
-
-      }
-    });
-
-    return () => unsubscribe();
-  }, [roomId, isCallActive, localParticipantId, localStream, isMicEnabled, isVideoEnabled]);
 
 
   useEffect(() => {
@@ -140,17 +90,8 @@ export default function RoomPage() {
       setIsMicEnabled(true);
       setIsVideoEnabled(true);
 
-      // Add local participant to Firebase
-      const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
-      const participantData = {
-        id: localParticipantId,
-        name: `User-${localParticipantId.substring(0,5)}`, // Simple name
-        joinedAt: serverTimestamp(),
-        isAudioEnabled: true,
-        isVideoEnabled: true,
-      };
-      await set(participantRef, participantData);
-      onDisconnect(participantRef).remove(); // Firebase handles removal if connection drops
+      // Logic for adding participant to Firebase is removed.
+      // This would be replaced by calls to your new MongoDB backend via API/WebSockets.
 
       const localPStream: StreamParticipant = {
         id: localParticipantId,
@@ -160,7 +101,8 @@ export default function RoomPage() {
         isAudioEnabled: true,
         isVideoEnabled: true,
       };
-      setStreamParticipants([localPStream]);
+      // For now, only local stream is shown. Remote streams require full WebRTC + signaling.
+      setStreamParticipants([localPStream]); 
 
     } catch (err) {
       console.error('Error accessing media devices.', err);
@@ -175,37 +117,28 @@ export default function RoomPage() {
   };
 
   const leaveCall = useCallback(async () => {
-    if (roomId && localParticipantId) {
-      const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
-      await remove(participantRef); // Explicitly remove on leaving
-    }
+    // Logic for removing participant from Firebase is removed.
+    // This would be replaced by calls to your new MongoDB backend.
+    
     cleanupStream(localStream);
     // In a full WebRTC app, you would also clean up all peer connections here
-    streamParticipants.filter(p => !p.isLocal).forEach(p => p.stream && cleanupStream(p.stream));
-    
+    // For now, just clear local stream representation
     setLocalStream(null);
     setStreamParticipants([]);
-    setAllParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-  }, [roomId, localParticipantId, localStream, streamParticipants]);
+  }, [localStream]); // Dependencies updated
 
   useEffect(() => {
     // This effect ensures that if the component unmounts (e.g. user navigates away),
-    // we attempt to leave the call properly.
-    const currentLocalParticipantId = localParticipantIdRef.current;
-    const currentRoomId = roomId;
-    
+    // we attempt to clean up local media.
     return () => { 
-      if (isCallActive && currentRoomId && currentLocalParticipantId) {
-        // Try to gracefully leave the call if it was active
-        const participantRef = ref(database, `rooms/${currentRoomId}/participants/${currentLocalParticipantId}`);
-        remove(participantRef);
+      if (isCallActive) {
+        cleanupStream(localStream);
       }
-      cleanupStream(localStream);
-      streamParticipants.filter(p => !p.isLocal).forEach(p => p.stream && cleanupStream(p.stream));
+      // Cleanup of remote streams is not relevant here without signaling
     };
-  }, [isCallActive, localStream, streamParticipants, roomId]);
+  }, [isCallActive, localStream]);
 
 
   const toggleMic = async () => {
@@ -216,10 +149,7 @@ export default function RoomPage() {
         audioTracks.forEach(track => track.enabled = newMicState);
         setIsMicEnabled(newMicState);
         
-        // Update Firebase
-        const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
-        await set(participantRef, { isAudioEnabled: newMicState }, { merge: true });
-
+        // Update to MongoDB backend would go here
         setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isAudioEnabled: newMicState} : p));
       }
     }
@@ -233,17 +163,14 @@ export default function RoomPage() {
         videoTracks.forEach(track => track.enabled = newVideoState);
         setIsVideoEnabled(newVideoState);
 
-        // Update Firebase
-        const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
-        await set(participantRef, { isVideoEnabled: newVideoState }, { merge: true });
-
+        // Update to MongoDB backend would go here
         setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isVideoEnabled: newVideoState} : p));
       }
     }
   };
   
   const handleSendMessage = (text: string) => {
-    if (!localParticipantId) return; // Using localParticipantId as userId for chat now
+    if (!localParticipantId) return;
     const newMessage: Message = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       text,
@@ -253,6 +180,7 @@ export default function RoomPage() {
       userId: localParticipantId, 
     };
     setMessages(prevMessages => [...prevMessages, newMessage]);
+    // Saving messages to MongoDB would happen here, via an API call.
   };
 
   if (!mounted || !roomId) {
@@ -301,12 +229,9 @@ export default function RoomPage() {
             </div>
           ) : (
             <>
+              {/* Participant count from Firebase is removed. This needs new backend logic. */}
               <div className="mb-2 text-sm text-muted-foreground">
-                In call. Participants in room (from Firebase): {allParticipants.length + 1} (including you).
-                {/* Displaying names of other participants */}
-                {allParticipants.length > 0 && (
-                  <span className="ml-2">Others: {allParticipants.map(p => p.name || p.id.substring(0,5)).join(', ')}</span>
-                )}
+                In call. (Participant list display requires backend integration with MongoDB/WebSockets)
               </div>
               <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in">
                 {streamParticipants.find(p => p.isLocal && p.stream) && (
@@ -318,16 +243,14 @@ export default function RoomPage() {
                     isVideoEnabled={streamParticipants.find(p => p.isLocal)!.isVideoEnabled}
                   />
                 )}
-                {/* This part needs full WebRTC to show actual remote streams */}
-                {allParticipants.length > 0 && !streamParticipants.find(p => !p.isLocal && p.stream) && (
-                   <div className="bg-muted/70 rounded-lg flex flex-col items-center justify-center text-muted-foreground aspect-video p-4 animate-pulse border border-border/30">
-                       <Users className="w-12 h-12 md:w-16 md:h-16 opacity-60 mb-3" />
-                       <p className="text-sm md:text-base text-center">
-                        {allParticipants.length > 0 ? `${allParticipants.length} other participant(s) detected. Waiting for video/audio connection...` : "Waiting for others to join..."}
-                       </p>
-                       <p className="text-xs mt-1"> (Full video connection requires WebRTC offer/answer exchange - not yet implemented) </p>
-                   </div>
-                )}
+                {/* Placeholder for remote streams - requires full WebRTC and signaling backend */}
+                 <div className="bg-muted/70 rounded-lg flex flex-col items-center justify-center text-muted-foreground aspect-video p-4 animate-pulse border border-border/30">
+                     <Users className="w-12 h-12 md:w-16 md:h-16 opacity-60 mb-3" />
+                     <p className="text-sm md:text-base text-center">
+                       Waiting for remote video/audio connection...
+                     </p>
+                     <p className="text-xs mt-1"> (Full video connection requires WebRTC offer/answer exchange with a signaling server - not yet implemented with MongoDB) </p>
+                 </div>
               </div>
               <CallControls
                 isMicEnabled={isMicEnabled}
