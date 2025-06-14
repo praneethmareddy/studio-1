@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Loader2, Lightbulb, Sparkles } from 'lucide-react';
+import { Loader2, Lightbulb, Sparkles, AlertTriangle } from 'lucide-react';
 import { suggestConversationTopics, SuggestConversationTopicsInput } from '@/ai/flows/suggest-conversation-topics';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { Message } from '@/types';
@@ -23,11 +23,11 @@ export default function TopicSuggestion({ messages }: TopicSuggestionProps) {
     setSuggestedTopics([]);
 
     const chatContent = messages
-      .filter(msg => msg.sender === 'user') // Only use user messages for context
+      .filter(msg => msg.sender === 'user') 
       .map(msg => msg.text)
       .join('\n');
 
-    if (chatContent.trim().length < 20) { // Require some content before suggesting
+    if (chatContent.trim().length < 20) { 
       setError("Not enough chat content to suggest topics. Keep chatting!");
       setIsLoading(false);
       return;
@@ -50,59 +50,65 @@ export default function TopicSuggestion({ messages }: TopicSuggestionProps) {
   };
 
   return (
-    <div className="p-4 space-y-4 h-full flex flex-col">
-      <Card className="shadow-md flex-grow flex flex-col">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xl flex items-center font-headline">
-            <Lightbulb className="mr-2 h-6 w-6 text-primary" />
+    <div className="p-3 md:p-4 space-y-4 h-full flex flex-col">
+      <Card className="shadow-lg border-border/50 flex-grow flex flex-col bg-card/80 backdrop-blur-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-xl flex items-center font-headline tracking-tight text-primary">
+            <Lightbulb className="mr-2.5 h-6 w-6 text-primary drop-shadow-[0_1px_2px_rgba(var(--primary-rgb),0.4)]" />
             Topic Ideas
           </CardTitle>
-          <CardDescription>Running out of things to say? Let AI help!</CardDescription>
+          <CardDescription className="text-muted-foreground">Running out of things to say? Let AI help!</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3 flex-grow overflow-y-auto">
+        <CardContent className="space-y-3 flex-grow overflow-y-auto custom-scrollbar pr-1"> {/* Added custom-scrollbar if needed */}
           {error && (
-            <Alert variant="destructive" className="my-2">
-              <Lightbulb className="h-4 w-4" />
+            <Alert variant="destructive" className="my-2 animate-shake">
+              <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Suggestion Error</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
           {isLoading && (
-            <div className="flex items-center justify-center py-6">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary mb-3" />
               <p className="ml-2 text-muted-foreground">Thinking of topics...</p>
+              <p className="text-xs text-muted-foreground/70">AI is brewing some ideas!</p>
             </div>
           )}
 
           {!isLoading && !error && suggestedTopics.length === 0 && (
-            <div className="text-center text-muted-foreground py-6">
-              <Sparkles className="mx-auto h-10 w-10 mb-2 text-accent" />
-              <p>Click the button below to get topic suggestions based on your chat!</p>
+            <div className="text-center text-muted-foreground py-6 px-2">
+              <Sparkles className="mx-auto h-12 w-12 mb-3 text-accent opacity-80" />
+              <p className="font-medium">Ready for inspiration?</p>
+              <p className="text-sm">Click below to get topic suggestions based on your chat!</p>
             </div>
           )}
           
           {suggestedTopics.length > 0 && (
-            <ul className="list-none space-y-2">
+            <ul className="list-none space-y-2.5">
               {suggestedTopics.map((topic, index) => (
-                <li key={index} className="p-3 bg-background rounded-md border border-primary/20 shadow-sm hover:shadow-md transition-shadow">
+                <li 
+                  key={index} 
+                  className="p-3 bg-background rounded-md border border-primary/20 shadow-sm hover:shadow-md hover:border-primary/40 transition-all duration-200 transform hover:scale-[1.02]"
+                  style={{animation: `slide-in-up 0.3s ease-out ${index * 0.05}s backwards`}}
+                >
                   <p className="text-sm text-foreground">{topic}</p>
                 </li>
               ))}
             </ul>
           )}
         </CardContent>
-        <div className="p-4 border-t mt-auto">
+        <div className="p-3 md:p-4 border-t border-border/50 mt-auto">
           <Button 
             onClick={handleSuggestTopics} 
             disabled={isLoading} 
-            className="w-full bg-accent hover:bg-accent/90 text-accent-foreground transition-transform transform hover:scale-105"
+            className="w-full bg-gradient-to-r from-accent to-pink-500 hover:shadow-glow-accent-md text-accent-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press py-3 text-base"
             aria-label="Suggest conversation topics"
           >
             {isLoading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             ) : (
-              <Sparkles className="mr-2 h-4 w-4" />
+              <Sparkles className="mr-2 h-5 w-5" />
             )}
             Get Suggestions
           </Button>

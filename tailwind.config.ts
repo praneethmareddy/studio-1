@@ -95,14 +95,40 @@ export default {
         'slide-in-up': {
           '0%': { transform: 'translateY(20px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
-        }
+        },
+        'button-press': {
+          '0%, 100%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(0.97)' },
+        },
+        'hover-lift': {
+          '0%': { transform: 'translateY(0px)', boxShadow: 'var(--tw-shadow)' },
+          '100%': { transform: 'translateY(-4px)', boxShadow: 'var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow-lg)' },
+        },
+        'gradient-pulse': {
+          '0%, 100%': { 'background-position': '0% 50%' },
+          '50%': { 'background-position': '100% 50%' },
+        },
+         'subtle-glow': {
+          '0%, 100%': { boxShadow: '0 0 5px hsl(var(--primary) / 0.3), 0 0 10px hsl(var(--primary) / 0.2)' },
+          '50%': { boxShadow: '0 0 10px hsl(var(--primary) / 0.5), 0 0 20px hsl(var(--primary) / 0.3)' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
         'fade-in': 'fade-in 0.5s ease-out forwards',
         'slide-in-up': 'slide-in-up 0.5s ease-out forwards',
+        'button-press': 'button-press 0.2s ease-out',
+        'hover-lift': 'hover-lift 0.3s ease-out forwards',
+        'gradient-pulse': 'gradient-pulse 3s ease-in-out infinite',
+        'subtle-glow': 'subtle-glow 2s ease-in-out infinite alternate',
       },
+      boxShadow: {
+        'glow-primary-sm': '0 0 8px 0px hsl(var(--primary) / 0.3)',
+        'glow-primary-md': '0 0 15px 2px hsl(var(--primary) / 0.4)',
+        'glow-accent-sm': '0 0 8px 0px hsl(var(--accent) / 0.3)',
+        'glow-accent-md': '0 0 15px 2px hsl(var(--accent) / 0.4)',
+      }
     },
   },
   plugins: [require('tailwindcss-animate')],

@@ -21,34 +21,43 @@ export default function CallControls({
   onLeaveCall,
   className
 }: CallControlsProps) {
+  const controlButtonBaseClass = "transition-all duration-200 ease-in-out transform hover:scale-110 rounded-full w-14 h-14 md:w-16 md:h-16 p-0 text-lg shadow-lg active:animate-button-press";
+  
   return (
-    <div className={cn("flex justify-center items-center gap-2 md:gap-3 p-3 bg-card rounded-xl shadow-lg border", className)}>
+    <div className={cn(
+        "flex justify-center items-center gap-3 md:gap-4 p-3 bg-card/70 backdrop-blur-sm rounded-xl shadow-xl border border-border/50", 
+        className
+      )}
+    >
       <Button
         onClick={onToggleMic}
         variant={isMicEnabled ? "outline" : "secondary"}
-        size="lg"
         aria-label={isMicEnabled ? "Mute microphone" : "Unmute microphone"}
-        className={cn("transition-all rounded-full w-12 h-12 md:w-14 md:h-14 p-0", !isMicEnabled && "bg-destructive hover:bg-destructive/90 text-destructive-foreground")}
+        className={cn(
+          controlButtonBaseClass, 
+          isMicEnabled ? "border-primary/50 hover:bg-primary/10 text-primary" : "bg-destructive hover:bg-destructive/90 text-destructive-foreground shadow-glow-accent-sm"
+        )}
       >
-        {isMicEnabled ? <Mic className="h-5 w-5 md:h-6 md:w-6" /> : <MicOff className="h-5 w-5 md:h-6 md:w-6" />}
+        {isMicEnabled ? <Mic className="h-6 w-6 md:h-7 md:w-7" /> : <MicOff className="h-6 w-6 md:h-7 md:w-7" />}
       </Button>
       <Button
         onClick={onToggleVideo}
         variant={isVideoEnabled ? "outline" : "secondary"}
-        size="lg"
         aria-label={isVideoEnabled ? "Stop video" : "Start video"}
-         className={cn("transition-all rounded-full w-12 h-12 md:w-14 md:h-14 p-0", !isVideoEnabled && "bg-destructive hover:bg-destructive/90 text-destructive-foreground")}
+         className={cn(
+           controlButtonBaseClass, 
+           isVideoEnabled ? "border-primary/50 hover:bg-primary/10 text-primary" : "bg-destructive hover:bg-destructive/90 text-destructive-foreground shadow-glow-accent-sm"
+          )}
       >
-        {isVideoEnabled ? <VideoIcon className="h-5 w-5 md:h-6 md:w-6" /> : <VideoIconOff className="h-5 w-5 md:h-6 md:w-6" />}
+        {isVideoEnabled ? <VideoIcon className="h-6 w-6 md:h-7 md:w-7" /> : <VideoIconOff className="h-6 w-6 md:h-7 md:w-7" />}
       </Button>
       <Button
         onClick={onLeaveCall}
         variant="destructive"
-        size="lg"
         aria-label="Leave call"
-        className="transition-all rounded-full w-12 h-12 md:w-14 md:h-14 p-0"
+        className={cn(controlButtonBaseClass, "bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white shadow-glow-accent-md")}
       >
-        <PhoneOff className="h-5 w-5 md:h-6 md:w-6" />
+        <PhoneOff className="h-6 w-6 md:h-7 md:w-7" />
       </Button>
     </div>
   );

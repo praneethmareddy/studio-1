@@ -22,17 +22,23 @@ export default function ChatInput({ onSendMessage, disabled }: ChatInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex gap-2 p-4 border-t bg-card sticky bottom-0 z-10">
+    <form onSubmit={handleSubmit} className="flex gap-2 p-3 md:p-4 border-t border-border/50 bg-card sticky bottom-0 z-10">
       <Input
         type="text"
         value={messageText}
         onChange={(e) => setMessageText(e.target.value)}
         placeholder="Type your message..."
-        className="flex-grow focus-visible:ring-primary"
+        className="flex-grow focus-visible:ring-primary focus-visible:shadow-glow-primary-sm text-base py-3 h-auto"
         disabled={disabled}
         aria-label="Chat message input"
       />
-      <Button type="submit" disabled={!messageText.trim() || disabled} aria-label="Send message">
+      <Button 
+        type="submit" 
+        disabled={!messageText.trim() || disabled} 
+        aria-label="Send message"
+        className="px-4 bg-primary hover:bg-accent text-primary-foreground transition-all duration-200 transform hover:scale-105 active:animate-button-press"
+        size="lg"
+      >
         <Send className="h-5 w-5" />
       </Button>
     </form>
