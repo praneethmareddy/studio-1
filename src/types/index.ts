@@ -6,3 +6,11 @@ export interface Message {
   roomId: string;
   userId?: string; // Optional: if you want to identify users later
 }
+
+export interface RemoteStream {
+  id: string; // participant ID or stream ID
+  stream: MediaStream;
+  name?: string; // participant name
+  isAudioEnabled?: boolean; 
+  isVideoEnabled?: boolean; 
+}
