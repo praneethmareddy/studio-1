@@ -1,6 +1,7 @@
+
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import RoomHeader from '@/components/chat/RoomHeader';
 import ChatInput from '@/components/chat/ChatInput';
@@ -8,13 +9,17 @@ import ChatMessage from '@/components/chat/ChatMessage';
 import TopicSuggestion from '@/components/chat/TopicSuggestion';
 import VideoPlayer from '@/components/chat/VideoPlayer';
 import CallControls from '@/components/chat/CallControls';
-import type { Message, RemoteStream } from '@/types';
+import type { Message, Participant, StreamParticipant } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Video as VideoIcon, Users, AlertTriangle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { database } from '@/lib/firebase'; // Firebase integration
+import { ref, onValue, set, onDisconnect, remove, serverTimestamp } from 'firebase/database'; // Firebase RTDB functions
 
+// Helper to generate a unique ID for participants
+const generateParticipantId = () => `participant-${Math.random().toString(36).substring(2, 11)}`;
 
 export default function RoomPage() {
   const params = useParams();
@@ -22,10 +27,15 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [mounted, setMounted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  
+  const [localParticipantId, setLocalParticipantId] = useState<string | null>(null);
+  const localParticipantIdRef = useRef<string | null>(null); // Ref to hold current participantId for cleanup
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<RemoteStream[]>([]);
+  const [allParticipants, setAllParticipants] = useState<Participant[]>([]); // All participants from Firebase
+  const [streamParticipants, setStreamParticipants] = useState<StreamParticipant[]>([]); // Participants with active streams (local + remote)
+
+
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
@@ -34,7 +44,9 @@ export default function RoomPage() {
 
   useEffect(() => {
     setMounted(true);
-    setCurrentUserId(`user-${Math.random().toString(36).substring(2, 9)}`);
+    const newParticipantId = generateParticipantId();
+    setLocalParticipantId(newParticipantId);
+    localParticipantIdRef.current = newParticipantId; // Store in ref for cleanup
 
     if (roomId) {
       setMessages([
@@ -47,7 +59,61 @@ export default function RoomPage() {
         }
       ]);
     }
+    
+    // Firebase cleanup on unmount
+    return () => {
+      if (roomId && localParticipantIdRef.current) {
+        const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantIdRef.current}`);
+        remove(participantRef);
+      }
+    };
   }, [roomId]);
+
+  // Subscribe to participants changes in Firebase
+  useEffect(() => {
+    if (!roomId || !isCallActive || !localParticipantId) return;
+
+    const participantsRef = ref(database, `rooms/${roomId}/participants`);
+    const unsubscribe = onValue(participantsRef, (snapshot) => {
+      const participantsData = snapshot.val();
+      const fetchedParticipants: Participant[] = [];
+      if (participantsData) {
+        Object.keys(participantsData).forEach(key => {
+          if (key !== localParticipantId) { // Exclude local participant from this list initially
+            fetchedParticipants.push({ id: key, ...participantsData[key] });
+          }
+        });
+      }
+      setAllParticipants(fetchedParticipants);
+      // Basic update to streamParticipants - more complex WebRTC logic would update this based on connections
+      // For now, we'll just show our local stream and placeholders if others are detected
+      if (localStream) {
+        const localParticipantStream: StreamParticipant = {
+          id: localParticipantId,
+          name: 'You (Me)', // Placeholder name
+          stream: localStream,
+          isLocal: true,
+          isAudioEnabled: isMicEnabled,
+          isVideoEnabled: isVideoEnabled,
+        };
+         // Combine local stream with dummy remote streams for now
+        const currentStreamParticipants = [localParticipantStream];
+        
+        // Placeholder for remote participants based on 'allParticipants'
+        // In a real app, this would be driven by successful WebRTC connections
+        fetchedParticipants.forEach(p => {
+          // This is a placeholder. Real remote streams would be added via WebRTC.
+          // For now, we'll just acknowledge their presence without a stream.
+          // To actually display remote videos, WebRTC peer connections are needed.
+        });
+        setStreamParticipants(currentStreamParticipants);
+
+      }
+    });
+
+    return () => unsubscribe();
+  }, [roomId, isCallActive, localParticipantId, localStream, isMicEnabled, isVideoEnabled]);
+
 
   useEffect(() => {
     scrollToBottom();
@@ -62,6 +128,10 @@ export default function RoomPage() {
   };
 
   const joinCall = async () => {
+    if (!localParticipantId) {
+      toast({ title: 'Error', description: 'Participant ID not set.', variant: 'destructive' });
+      return;
+    }
     setMediaError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -69,13 +139,28 @@ export default function RoomPage() {
       setIsCallActive(true);
       setIsMicEnabled(true);
       setIsVideoEnabled(true);
-      
-      setTimeout(() => {
-         if(stream) { 
-            const dummyStream = stream.clone(); 
-            setRemoteStreams([{ id: 'remote-dummy-1', stream: dummyStream, name: 'Participant 2', isAudioEnabled: true, isVideoEnabled: true }]);
-         }
-      }, 2000);
+
+      // Add local participant to Firebase
+      const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
+      const participantData = {
+        id: localParticipantId,
+        name: `User-${localParticipantId.substring(0,5)}`, // Simple name
+        joinedAt: serverTimestamp(),
+        isAudioEnabled: true,
+        isVideoEnabled: true,
+      };
+      await set(participantRef, participantData);
+      onDisconnect(participantRef).remove(); // Firebase handles removal if connection drops
+
+      const localPStream: StreamParticipant = {
+        id: localParticipantId,
+        name: 'You',
+        stream: stream,
+        isLocal: true,
+        isAudioEnabled: true,
+        isVideoEnabled: true,
+      };
+      setStreamParticipants([localPStream]);
 
     } catch (err) {
       console.error('Error accessing media devices.', err);
@@ -89,52 +174,83 @@ export default function RoomPage() {
     }
   };
 
-  const leaveCall = () => {
+  const leaveCall = useCallback(async () => {
+    if (roomId && localParticipantId) {
+      const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
+      await remove(participantRef); // Explicitly remove on leaving
+    }
     cleanupStream(localStream);
-    remoteStreams.forEach(rs => cleanupStream(rs.stream));
+    // In a full WebRTC app, you would also clean up all peer connections here
+    streamParticipants.filter(p => !p.isLocal).forEach(p => p.stream && cleanupStream(p.stream));
+    
     setLocalStream(null);
-    setRemoteStreams([]);
+    setStreamParticipants([]);
+    setAllParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-  };
+  }, [roomId, localParticipantId, localStream, streamParticipants]);
 
   useEffect(() => {
+    // This effect ensures that if the component unmounts (e.g. user navigates away),
+    // we attempt to leave the call properly.
+    const currentLocalParticipantId = localParticipantIdRef.current;
+    const currentRoomId = roomId;
+    
     return () => { 
+      if (isCallActive && currentRoomId && currentLocalParticipantId) {
+        // Try to gracefully leave the call if it was active
+        const participantRef = ref(database, `rooms/${currentRoomId}/participants/${currentLocalParticipantId}`);
+        remove(participantRef);
+      }
       cleanupStream(localStream);
-      remoteStreams.forEach(rs => cleanupStream(rs.stream));
+      streamParticipants.filter(p => !p.isLocal).forEach(p => p.stream && cleanupStream(p.stream));
     };
-  }, [localStream, remoteStreams]);
+  }, [isCallActive, localStream, streamParticipants, roomId]);
 
 
-  const toggleMic = () => {
-    if (localStream) {
+  const toggleMic = async () => {
+    if (localStream && localParticipantId) {
       const audioTracks = localStream.getAudioTracks();
       if (audioTracks.length > 0) {
-        audioTracks.forEach(track => track.enabled = !track.enabled);
-        setIsMicEnabled(prev => !prev);
+        const newMicState = !isMicEnabled;
+        audioTracks.forEach(track => track.enabled = newMicState);
+        setIsMicEnabled(newMicState);
+        
+        // Update Firebase
+        const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
+        await set(participantRef, { isAudioEnabled: newMicState }, { merge: true });
+
+        setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isAudioEnabled: newMicState} : p));
       }
     }
   };
 
-  const toggleVideo = () => {
-    if (localStream) {
+  const toggleVideo = async () => {
+    if (localStream && localParticipantId) {
       const videoTracks = localStream.getVideoTracks();
       if (videoTracks.length > 0) {
-        videoTracks.forEach(track => track.enabled = !track.enabled);
-        setIsVideoEnabled(prev => !prev);
+        const newVideoState = !isVideoEnabled;
+        videoTracks.forEach(track => track.enabled = newVideoState);
+        setIsVideoEnabled(newVideoState);
+
+        // Update Firebase
+        const participantRef = ref(database, `rooms/${roomId}/participants/${localParticipantId}`);
+        await set(participantRef, { isVideoEnabled: newVideoState }, { merge: true });
+
+        setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isVideoEnabled: newVideoState} : p));
       }
     }
   };
   
   const handleSendMessage = (text: string) => {
-    if (!currentUserId) return;
+    if (!localParticipantId) return; // Using localParticipantId as userId for chat now
     const newMessage: Message = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       text,
       sender: 'user', 
       timestamp: new Date(),
       roomId,
-      userId: currentUserId, 
+      userId: localParticipantId, 
     };
     setMessages(prevMessages => [...prevMessages, newMessage]);
   };
@@ -185,27 +301,31 @@ export default function RoomPage() {
             </div>
           ) : (
             <>
+              <div className="mb-2 text-sm text-muted-foreground">
+                In call. Participants in room (from Firebase): {allParticipants.length + 1} (including you).
+                {/* Displaying names of other participants */}
+                {allParticipants.length > 0 && (
+                  <span className="ml-2">Others: {allParticipants.map(p => p.name || p.id.substring(0,5)).join(', ')}</span>
+                )}
+              </div>
               <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in">
-                <VideoPlayer 
-                  stream={localStream} 
-                  isLocal 
-                  name="You" 
-                  isAudioEnabled={isMicEnabled}
-                  isVideoEnabled={isVideoEnabled}
-                />
-                {remoteStreams.map(rs => (
+                {streamParticipants.find(p => p.isLocal && p.stream) && (
                   <VideoPlayer 
-                    key={rs.id} 
-                    stream={rs.stream} 
-                    name={rs.name || 'Participant'}
-                    isAudioEnabled={rs.isAudioEnabled} 
-                    isVideoEnabled={rs.isVideoEnabled}
+                    stream={streamParticipants.find(p => p.isLocal)!.stream} 
+                    isLocal 
+                    name={streamParticipants.find(p => p.isLocal)!.name || 'You'}
+                    isAudioEnabled={streamParticipants.find(p => p.isLocal)!.isAudioEnabled}
+                    isVideoEnabled={streamParticipants.find(p => p.isLocal)!.isVideoEnabled}
                   />
-                ))}
-                {remoteStreams.length === 0 && localStream && (
+                )}
+                {/* This part needs full WebRTC to show actual remote streams */}
+                {allParticipants.length > 0 && !streamParticipants.find(p => !p.isLocal && p.stream) && (
                    <div className="bg-muted/70 rounded-lg flex flex-col items-center justify-center text-muted-foreground aspect-video p-4 animate-pulse border border-border/30">
                        <Users className="w-12 h-12 md:w-16 md:h-16 opacity-60 mb-3" />
-                       <p className="text-sm md:text-base text-center">Waiting for others to join...</p>
+                       <p className="text-sm md:text-base text-center">
+                        {allParticipants.length > 0 ? `${allParticipants.length} other participant(s) detected. Waiting for video/audio connection...` : "Waiting for others to join..."}
+                       </p>
+                       <p className="text-xs mt-1"> (Full video connection requires WebRTC offer/answer exchange - not yet implemented) </p>
                    </div>
                 )}
               </div>
@@ -231,7 +351,7 @@ export default function RoomPage() {
                 <ChatMessage 
                   key={msg.id} 
                   message={msg} 
-                  isCurrentUser={msg.userId === currentUserId && msg.sender === 'user'} 
+                  isCurrentUser={msg.userId === localParticipantId && msg.sender === 'user'} 
                 />
               ))}
             </div>
