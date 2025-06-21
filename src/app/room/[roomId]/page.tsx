@@ -57,10 +57,10 @@ export default function RoomPage() {
     newSocket.on('ice-candidate', handleReceiveCandidate);
     newSocket.on('user-disconnected', handleUserDisconnected);
 
-    newSocket.on('receive-message', (data: { text: string, sender: string, timestamp: string }) => {
+    newSocket.on('receive-message', (data: { message: string, sender: string, timestamp: string }) => {
       const newMessage: Message = {
         id: `${data.sender}-${data.timestamp}`,
-        text: data.text,
+        text: data.message,
         sender: 'user',
         timestamp: new Date(data.timestamp),
         roomId: roomId,
@@ -69,10 +69,10 @@ export default function RoomPage() {
       setMessages(prev => [...prev, newMessage]);
     });
 
-    newSocket.on('previous-messages', (history: any[]) => {
+    newSocket.on('previous-messages', (history: {message: string, sender: string, timestamp: string}[]) => {
        const formattedHistory: Message[] = history.map(item => ({
          id: `${item.sender}-${item.timestamp}`,
-         text: item.text,
+         text: item.message,
          sender: 'user',
          timestamp: new Date(item.timestamp),
          roomId: roomId,
@@ -86,7 +86,7 @@ export default function RoomPage() {
       Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
       peerConnectionsRef.current = {};
     };
-  }, [roomId]); // Add roomId as a dependency
+  }, [roomId]);
 
   useEffect(() => {
     setMounted(true);
@@ -213,7 +213,7 @@ export default function RoomPage() {
   };
 
   const leaveCall = useCallback(() => {
-    socket?.emit('disconnect'); // Gracefully disconnect
+    socket?.disconnect(); 
     localStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
     Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
@@ -221,7 +221,6 @@ export default function RoomPage() {
     setRemoteParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-    // You might want to re-initiate socket connection or navigate away
   }, [localStream, socket]);
 
   const toggleMic = () => {
@@ -252,10 +251,8 @@ export default function RoomPage() {
       userId: localParticipantId,
     };
     
-    // Optimistically update local UI
     setMessages(prev => [...prev, newMessage]);
     
-    // Send message to server to broadcast to others
     socket.emit('send-message', { 
         roomId, 
         message: text,
