@@ -3,21 +3,25 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
 import ChatInput from '@/components/chat/ChatInput';
 import ChatMessage from '@/components/chat/ChatMessage';
 import TopicSuggestion from '@/components/chat/TopicSuggestion';
 import VideoPlayer from '@/components/chat/VideoPlayer';
 import CallControls from '@/components/chat/CallControls';
-import type { Message, StreamParticipant } from '@/types';
+import type { Message, RemoteParticipant } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Video as VideoIcon, Users, AlertTriangle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-// Helper to generate a unique ID for participants (can be kept client-side for now)
-const generateParticipantId = () => `participant-${Math.random().toString(36).substring(2, 11)}`;
+const SIGNALING_SERVER_URL = 'http://localhost:5000';
+
+const ICE_SERVERS = {
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+};
 
 export default function RoomPage() {
   const params = useParams();
@@ -25,51 +29,57 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [mounted, setMounted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
-  const [localParticipantId, setLocalParticipantId] = useState<string | null>(null);
-  
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [streamParticipants, setStreamParticipants] = useState<StreamParticipant[]>([]);
 
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [localParticipantId, setLocalParticipantId] = useState<string | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
+  const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([]);
 
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const { toast } = useToast();
+  
+  // Connect to signaling server and set up listeners
+  useEffect(() => {
+    const newSocket = io(SIGNALING_SERVER_URL);
+    setSocket(newSocket);
+    
+    newSocket.on('connect', () => {
+      setLocalParticipantId(newSocket.id);
+    });
+
+    newSocket.on('user-joined', handleUserJoined);
+    newSocket.on('offer', handleReceiveOffer);
+    newSocket.on('answer', handleReceiveAnswer);
+    newSocket.on('ice-candidate', handleReceiveCandidate);
+    newSocket.on('user-disconnected', handleUserDisconnected);
+
+    return () => {
+      newSocket.disconnect();
+      // Clean up all peer connections on component unmount
+      Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+      peerConnectionsRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     setMounted(true);
-    const newParticipantId = generateParticipantId();
-    setLocalParticipantId(newParticipantId);
-
+    // Initial welcome message
     if (roomId) {
       setMessages([
-        { 
-          id: 'system-welcome', 
-          text: `Welcome to Room ${roomId}! Join the call or start chatting. MongoDB is configured, but real-time participant and chat message updates are not yet implemented. Chat messages are currently local only.`, 
-          sender: 'system', 
+        {
+          id: 'system-welcome',
+          text: `Welcome to Room ${roomId}! Join the call to connect with others.`,
+          sender: 'system',
           timestamp: new Date(),
           roomId: roomId,
         }
       ]);
-      // TODO: Fetch initial messages for the room from your MongoDB backend API
     }
-    
-    // TODO: If using WebSockets for real-time messages, connect here and set up listeners.
-    // Example:
-    // const socket = io('/your-chat-namespace');
-    // socket.emit('joinRoom', roomId);
-    // socket.on('newMessage', (newMessage) => {
-    //   setMessages(prevMessages => [...prevMessages, newMessage]);
-    // });
-
-    return () => {
-      // TODO: Disconnect WebSocket if used
-      // socket.disconnect();
-    };
   }, [roomId]);
-
 
   useEffect(() => {
     scrollToBottom();
@@ -78,14 +88,80 @@ export default function RoomPage() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+  
+  const createPeerConnection = (peerId: string) => {
+    const pc = new RTCPeerConnection(ICE_SERVERS);
 
-  const cleanupStream = (stream: MediaStream | null) => {
-    stream?.getTracks().forEach(track => track.stop());
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socket) {
+        socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+      }
+    };
+    
+    pc.ontrack = (event) => {
+      setRemoteParticipants(prev => {
+        const existingParticipant = prev.find(p => p.id === peerId);
+        if (existingParticipant) {
+          // Update stream if it already exists
+          return prev.map(p => p.id === peerId ? { ...p, stream: event.streams[0] } : p);
+        } else {
+          // Add new participant
+          return [...prev, { id: peerId, name: `User ${peerId.substring(0, 4)}`, stream: event.streams[0] }];
+        }
+      });
+    };
+
+    if (localStream) {
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    }
+    
+    peerConnectionsRef.current[peerId] = pc;
+    return pc;
+  };
+  
+  // Signaling event handlers
+  const handleUserJoined = async (peerId: string) => {
+    toast({ title: 'User Joined', description: `A new user has entered the room.` });
+    const pc = createPeerConnection(peerId);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket?.emit('offer', { target: peerId, sdp: offer });
   };
 
+  const handleReceiveOffer = async (data: { from: string, sdp: RTCSessionDescriptionInit }) => {
+    const pc = createPeerConnection(data.from);
+    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket?.emit('answer', { target: data.from, sdp: answer });
+  };
+
+  const handleReceiveAnswer = async (data: { from: string, sdp: RTCSessionDescriptionInit }) => {
+    const pc = peerConnectionsRef.current[data.from];
+    if (pc) {
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    }
+  };
+  
+  const handleReceiveCandidate = async (data: { from: string, candidate: RTCIceCandidateInit }) => {
+    const pc = peerConnectionsRef.current[data.from];
+    if (pc) {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    }
+  };
+
+  const handleUserDisconnected = (peerId: string) => {
+    toast({ title: 'User Left', description: `A user has left the room.` });
+    if (peerConnectionsRef.current[peerId]) {
+      peerConnectionsRef.current[peerId].close();
+      delete peerConnectionsRef.current[peerId];
+    }
+    setRemoteParticipants(prev => prev.filter(p => p.id !== peerId));
+  };
+  
   const joinCall = async () => {
-    if (!localParticipantId) {
-      toast({ title: 'Error', description: 'Participant ID not set.', variant: 'destructive' });
+    if (!socket) {
+      toast({ title: 'Error', description: 'Not connected to signaling server.', variant: 'destructive' });
       return;
     }
     setMediaError(null);
@@ -95,21 +171,7 @@ export default function RoomPage() {
       setIsCallActive(true);
       setIsMicEnabled(true);
       setIsVideoEnabled(true);
-
-      // TODO: Send participant join event to your MongoDB backend via API/WebSockets
-      // This would typically involve signaling for WebRTC as well.
-
-      const localPStream: StreamParticipant = {
-        id: localParticipantId,
-        name: 'You', // In a real app, get this from user input or auth
-        stream: stream,
-        isLocal: true,
-        isAudioEnabled: true,
-        isVideoEnabled: true,
-      };
-      // For now, only local stream is shown. Remote streams require full WebRTC + signaling.
-      setStreamParticipants([localPStream]); 
-
+      socket.emit('join-room', roomId);
     } catch (err) {
       console.error('Error accessing media devices.', err);
       let errorMessage = 'Could not access camera/microphone.';
@@ -122,90 +184,55 @@ export default function RoomPage() {
     }
   };
 
-  const leaveCall = useCallback(async () => {
-    // TODO: Send participant leave event to your MongoDB backend via API/WebSockets
+  const leaveCall = useCallback(() => {
+    // Rely on socket.on('disconnect') on the server for cleanup
+    socket?.disconnect();
     
-    cleanupStream(localStream);
+    localStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
-    setStreamParticipants([]);
+    
+    Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+    peerConnectionsRef.current = {};
+    
+    setRemoteParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-  }, [localStream, localParticipantId, roomId]); 
+    // Re-initialize socket for potential re-join
+    const newSocket = io(SIGNALING_SERVER_URL);
+    setSocket(newSocket);
+  }, [localStream, socket]);
 
-  useEffect(() => {
-    return () => { 
-      if (isCallActive) {
-        cleanupStream(localStream);
-      }
-    };
-  }, [isCallActive, localStream]);
-
-
-  const toggleMic = async () => {
-    if (localStream && localParticipantId) {
-      const audioTracks = localStream.getAudioTracks();
-      if (audioTracks.length > 0) {
-        const newMicState = !isMicEnabled;
-        audioTracks.forEach(track => track.enabled = newMicState);
-        setIsMicEnabled(newMicState);
-        
-        // TODO: Update mic status to MongoDB backend via API/WebSockets for other users to see
-        setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isAudioEnabled: newMicState} : p));
-      }
+  const toggleMic = () => {
+    if (localStream) {
+      const newMicState = !isMicEnabled;
+      localStream.getAudioTracks().forEach(track => (track.enabled = newMicState));
+      setIsMicEnabled(newMicState);
     }
   };
 
-  const toggleVideo = async () => {
-    if (localStream && localParticipantId) {
-      const videoTracks = localStream.getVideoTracks();
-      if (videoTracks.length > 0) {
-        const newVideoState = !isVideoEnabled;
-        videoTracks.forEach(track => track.enabled = newVideoState);
-        setIsVideoEnabled(newVideoState);
-
-        // TODO: Update video status to MongoDB backend via API/WebSockets
-        setStreamParticipants(prev => prev.map(p => p.id === localParticipantId ? {...p, isVideoEnabled: newVideoState} : p));
-      }
+  const toggleVideo = () => {
+    if (localStream) {
+      const newVideoState = !isVideoEnabled;
+      localStream.getVideoTracks().forEach(track => (track.enabled = newVideoState));
+      setIsVideoEnabled(newVideoState);
     }
   };
-  
-  const handleSendMessage = async (text: string) => {
+
+  const handleSendMessage = (text: string) => {
+    // Note: Multi-user chat requires backend implementation.
+    // This is a local-only implementation for now.
     if (!localParticipantId) return;
     const newMessage: Message = {
-      id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, // Temporary client-side ID
+      id: `${Date.now()}`,
       text,
-      sender: 'user', // In a real app, this might be more dynamic or based on auth
+      sender: 'user',
       timestamp: new Date(),
       roomId,
-      userId: localParticipantId, 
+      userId: localParticipantId,
     };
-    
-    // Optimistically update local state
-    setMessages(prevMessages => [...prevMessages, newMessage]);
-
-    // TODO: Send message to your MongoDB backend API
-    // Example:
-    // try {
-    //   const response = await fetch('/api/chat/messages', {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({ roomId, userId: localParticipantId, text }),
-    //   });
-    //   if (!response.ok) {
-    //     // Handle error, maybe revert optimistic update or show toast
-    //     console.error('Failed to send message');
-    //     toast({ title: 'Error', description: 'Failed to send message.', variant: 'destructive' });
-    //     // Revert: setMessages(prev => prev.filter(m => m.id !== newMessage.id));
-    //   }
-    //   // If using WebSockets, the backend would broadcast this message,
-    //   // and the local client would receive it via its WebSocket listener,
-    //   // potentially avoiding duplicate messages if handled correctly.
-    // } catch (error) {
-    //   console.error('Error sending message:', error);
-    //   toast({ title: 'Error', description: 'Could not send message.', variant: 'destructive' });
-    // }
+    setMessages(prev => [...prev, newMessage]);
   };
-
+  
   if (!mounted || !roomId) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen text-lg text-primary animate-fade-in">
@@ -218,7 +245,7 @@ export default function RoomPage() {
   return (
     <div className="flex flex-col h-screen bg-background">
       <RoomHeader roomId={roomId} />
-      
+
       <div className="flex flex-1 overflow-hidden md:flex-row flex-col">
         <main className="flex-1 flex flex-col p-2 md:p-4 overflow-hidden">
           {!isCallActive ? (
@@ -236,13 +263,13 @@ export default function RoomPage() {
                 <CardContent>
                   {mediaError && (
                     <div className="mb-4 p-3 bg-destructive/10 border border-destructive text-destructive rounded-md text-sm flex items-center gap-2 animate-shake">
-                      <AlertTriangle className="h-5 w-5 shrink-0" /> 
+                      <AlertTriangle className="h-5 w-5 shrink-0" />
                       <p>{mediaError}</p>
                     </div>
                   )}
-                  <Button 
-                    onClick={joinCall} 
-                    size="lg" 
+                  <Button
+                    onClick={joinCall}
+                    size="lg"
                     className="w-full py-7 text-lg bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
                   >
                     <VideoIcon className="mr-2 h-6 w-6" /> Join Call
@@ -252,26 +279,23 @@ export default function RoomPage() {
             </div>
           ) : (
             <>
-              <div className="mb-2 text-sm text-muted-foreground">
-                In call. (Participant list and remote video/audio display requires backend integration with MongoDB & WebSockets/WebRTC).
-              </div>
               <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in">
-                {streamParticipants.find(p => p.isLocal && p.stream) && (
-                  <VideoPlayer 
-                    stream={streamParticipants.find(p => p.isLocal)!.stream} 
-                    isLocal 
-                    name={streamParticipants.find(p => p.isLocal)!.name || 'You'}
-                    isAudioEnabled={streamParticipants.find(p => p.isLocal)!.isAudioEnabled}
-                    isVideoEnabled={streamParticipants.find(p => p.isLocal)!.isVideoEnabled}
+                {localStream && (
+                  <VideoPlayer
+                    stream={localStream}
+                    isLocal
+                    name="You"
+                    isAudioEnabled={isMicEnabled}
+                    isVideoEnabled={isVideoEnabled}
                   />
                 )}
-                 <div className="bg-muted/70 rounded-lg flex flex-col items-center justify-center text-muted-foreground aspect-video p-4 animate-pulse border border-border/30">
-                     <Users className="w-12 h-12 md:w-16 md:h-16 opacity-60 mb-3" />
-                     <p className="text-sm md:text-base text-center">
-                       Waiting for remote video/audio connection...
-                     </p>
-                     <p className="text-xs mt-1"> (Full video connection requires WebRTC offer/answer exchange via a signaling server connected to MongoDB - not yet implemented) </p>
-                 </div>
+                {remoteParticipants.map(participant => (
+                  <VideoPlayer
+                    key={participant.id}
+                    stream={participant.stream}
+                    name={participant.name}
+                  />
+                ))}
               </div>
               <CallControls
                 isMicEnabled={isMicEnabled}
@@ -279,7 +303,7 @@ export default function RoomPage() {
                 onLeaveCall={leaveCall}
                 onToggleMic={toggleMic}
                 onToggleVideo={toggleVideo}
-                className="mt-auto" 
+                className="mt-auto"
               />
             </>
           )}
@@ -292,17 +316,17 @@ export default function RoomPage() {
           <ScrollArea className="flex-1 p-3 md:p-4">
             <div className="space-y-3">
               {messages.map(msg => (
-                <ChatMessage 
-                  key={msg.id} 
-                  message={msg} 
-                  isCurrentUser={msg.userId === localParticipantId && msg.sender === 'user'} 
+                <ChatMessage
+                  key={msg.id}
+                  message={msg}
+                  isCurrentUser={msg.userId === localParticipantId && msg.sender === 'user'}
                 />
               ))}
             </div>
             <div ref={messagesEndRef} />
           </ScrollArea>
           
-          <ChatInput onSendMessage={handleSendMessage} /> 
+          <ChatInput onSendMessage={handleSendMessage} />
           
           <div className="border-t border-border/50 bg-background/30">
             <TopicSuggestion messages={messages} />
@@ -312,4 +336,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
