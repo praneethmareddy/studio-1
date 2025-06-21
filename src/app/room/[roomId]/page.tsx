@@ -65,18 +65,9 @@ function RoomPage() {
     }
   }, []);
 
-  const cleanupAllConnections = useCallback(() => {
-    console.log("Cleaning up all connections.");
-    localStream?.getTracks().forEach(track => track.stop());
-    Object.keys(peerConnectionsRef.current).forEach(cleanupPeerConnection);
-    socket?.disconnect();
-    setRemoteParticipants(new Map());
-    participantInfoRef.current.clear();
-  }, [localStream, socket, cleanupPeerConnection]);
-
   // Main setup effect for socket connection
   useEffect(() => {
-    if (!searchParams.get('name')) {
+    if (!localParticipantName || localParticipantName === 'Anonymous') {
       toast({
         title: 'Name Required',
         description: 'You must provide a name to enter a room. Redirecting to home...',
@@ -89,6 +80,15 @@ function RoomPage() {
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
 
+    const cleanupAllConnections = () => {
+      console.log("Cleaning up all connections.");
+      localStream?.getTracks().forEach(track => track.stop());
+      Object.keys(peerConnectionsRef.current).forEach(cleanupPeerConnection);
+      newSocket.disconnect();
+      setRemoteParticipants(new Map());
+      participantInfoRef.current.clear();
+    };
+    
     newSocket.on('connect', () => {
       newSocket.emit('join-room', { roomId, name: localParticipantName });
     });
@@ -102,37 +102,44 @@ function RoomPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Should only run once
 
-  const createPeerConnection = useCallback((peerId: string, stream: MediaStream) => {
-    if (peerConnectionsRef.current[peerId]) {
-      console.log(`Peer connection for ${peerId} already exists. Reusing.`);
-      return peerConnectionsRef.current[peerId];
-    }
-    console.log(`Creating new peer connection for ${peerId}`);
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socket) {
-        socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
-      }
-    };
-
-    pc.ontrack = (event) => {
-      const peerName = participantInfoRef.current.get(peerId)?.name || 'Someone';
-      console.log(`Received remote track from ${peerName} (${peerId})`);
-      setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerName, stream: event.streams[0] }));
-    };
-
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    
-    peerConnectionsRef.current[peerId] = pc;
-    return pc;
-  }, [socket]);
-
 
   // Effect to handle signaling and chat
   useEffect(() => {
     if (!socket) return;
+
+    const createPeerConnection = (peerId: string, stream: MediaStream) => {
+      if (peerConnectionsRef.current[peerId]) {
+        console.log(`Peer connection for ${peerId} already exists.`);
+        return peerConnectionsRef.current[peerId];
+      }
+      console.log(`Creating new peer connection for ${peerId}`);
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate && socket) {
+          socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+        }
+      };
+
+      pc.ontrack = (event) => {
+        const peerName = participantInfoRef.current.get(peerId)?.name || 'Someone';
+        console.log(`Received remote track from ${peerName} (${peerId})`);
+        setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerName, stream: event.streams[0] }));
+      };
+
+      stream.getTracks().forEach(track => {
+        try {
+          pc.addTrack(track, stream)
+        } catch (error) {
+          console.error("Error adding track:", error)
+        }
+      });
+      
+      peerConnectionsRef.current[peerId] = pc;
+      return pc;
+    };
     
+    // When you join, you get a list of users already in the room
     const handleExistingUsers = (users: {id: string, name: string}[]) => {
       console.log('Received existing users list:', users);
       users.forEach(user => {
@@ -142,11 +149,13 @@ function RoomPage() {
       });
     };
 
+    // When a new user joins, you are notified
     const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
       if (peerId === socket.id) return;
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
       participantInfoRef.current.set(peerId, { name: peerName });
 
+      // If you are already in a call, send an offer to the new user.
       if (isInCall && localStream) {
         console.log(`I'm in call. User ${peerName} joined. Sending them an offer.`);
         const pc = createPeerConnection(peerId, localStream);
@@ -181,7 +190,7 @@ function RoomPage() {
 
     const handleReceiveCandidate = async (data: { from: string, candidate: RTCIceCandidateInit }) => {
       const pc = peerConnectionsRef.current[data.from];
-      if (pc) {
+      if (pc && pc.remoteDescription) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         } catch (error) {
@@ -210,12 +219,14 @@ function RoomPage() {
     socket.on('ice-candidate', handleReceiveCandidate);
     socket.on('user-disconnected', handleUserDisconnected);
     
-    socket.on('receive-message', (newMessage: Message) => {
+    const handleReceiveMessage = (newMessage: Message) => {
       setMessages(prev => [...prev, newMessage]);
-    });
-    socket.on('previous-messages', (history: Message[]) => {
+    }
+    const handlePreviousMessages = (history: Message[]) => {
        setMessages(history);
-    });
+    }
+    socket.on('receive-message', handleReceiveMessage);
+    socket.on('previous-messages', handlePreviousMessages);
 
     return () => {
       socket.off('existing-users');
@@ -227,7 +238,7 @@ function RoomPage() {
       socket.off('receive-message');
       socket.off('previous-messages');
     };
-  }, [socket, isInCall, localStream, createPeerConnection, cleanupPeerConnection, toast, localParticipantName]);
+  }, [socket, isInCall, localStream, cleanupPeerConnection, toast, localParticipantName]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -243,7 +254,22 @@ function RoomPage() {
       // Proactively connect to anyone we know about who is already in the room
       for (const [peerId, peerInfo] of participantInfoRef.current.entries()) {
           console.log(`Initiating call with existing user ${peerInfo.name}`);
-          const pc = createPeerConnection(peerId, stream);
+          const pc = new RTCPeerConnection(ICE_SERVERS);
+      
+          pc.onicecandidate = (event) => {
+            if (event.candidate && socket) {
+              socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+            }
+          };
+
+          pc.ontrack = (event) => {
+            setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerInfo.name, stream: event.streams[0] }));
+          };
+
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+          peerConnectionsRef.current[peerId] = pc;
+          
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           socket?.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
