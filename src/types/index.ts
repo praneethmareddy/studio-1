@@ -3,7 +3,7 @@ export interface Message {
   id: string;
   text: string;
   sender: 'user' | 'ai' | 'system'; 
-  timestamp: Date;
+  timestamp: Date | string; // Allow string for data from backend
   roomId: string;
   userId: string; 
   senderName: string;
@@ -15,3 +15,5 @@ export interface RemoteParticipant {
   name: string;
   stream: MediaStream;
 }
+
+    
