@@ -2,8 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { Copy, Link as LinkIcon } from 'lucide-react'; // Changed to LinkIcon to avoid conflict
-import { useEffect, useState } from 'react';
+import { Copy, Link as LinkIcon } from 'lucide-react';
 
 interface RoomHeaderProps {
   roomId: string;
@@ -11,27 +10,20 @@ interface RoomHeaderProps {
 
 export default function RoomHeader({ roomId }: RoomHeaderProps) {
   const { toast } = useToast();
-  const [roomUrl, setRoomUrl] = useState('');
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setRoomUrl(window.location.href);
-    }
-  }, []);
-
-  const handleCopyLink = async () => {
-    if (!roomUrl) return;
+  const handleCopyId = async () => {
+    if (!roomId) return;
     try {
-      await navigator.clipboard.writeText(roomUrl);
+      await navigator.clipboard.writeText(roomId);
       toast({
-        title: 'Link Copied!',
-        description: 'Room link copied to clipboard.',
+        title: 'Room ID Copied!',
+        description: 'You can now share it with others to join.',
         duration: 3000,
       });
     } catch (err) {
       toast({
-        title: 'Error Copying Link',
-        description: 'Failed to copy room link. Please try again.',
+        title: 'Error Copying ID',
+        description: 'Failed to copy room ID. Please try again.',
         variant: 'destructive',
         duration: 3000,
       });
@@ -51,17 +43,20 @@ export default function RoomHeader({ roomId }: RoomHeaderProps) {
               Room: <span className="font-bold text-accent">{roomId}</span>
             </h1>
           </div>
-          <p className="text-sm text-muted-foreground mt-1">Share this room ID or link to invite others.</p>
+          <p className="text-sm text-muted-foreground mt-1 hidden sm:block">Share this room ID to invite others.</p>
         </div>
-        <Button 
-          onClick={handleCopyLink} 
-          variant="outline" 
-          size="default" 
-          aria-label="Copy room link"
-          className="border-primary/40 hover:bg-primary/10 hover:text-primary hover:border-primary/70 transition-all duration-200 group"
-        >
-          <Copy className="mr-2 h-4 w-4 group-hover:animate-pulse" /> Copy Link
-        </Button>
+        <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-muted-foreground hidden md:block">Copy ID:</p>
+            <Button 
+              onClick={handleCopyId} 
+              variant="outline" 
+              size="icon" 
+              aria-label="Copy Room ID"
+              className="border-primary/40 hover:bg-primary/10 hover:text-primary hover:border-primary/70 transition-all duration-200 group h-10 w-10"
+            >
+              <Copy className="h-5 w-5 group-hover:animate-pulse" />
+            </Button>
+        </div>
       </div>
     </header>
   );

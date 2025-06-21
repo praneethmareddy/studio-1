@@ -74,7 +74,7 @@ function RoomPage() {
     participantInfoRef.current.clear();
   }, [localStream, socket, cleanupPeerConnection]);
 
-  // Main setup effect
+  // Main setup effect for socket connection
   useEffect(() => {
     if (!searchParams.get('name')) {
       toast({
@@ -89,18 +89,25 @@ function RoomPage() {
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
 
+    newSocket.on('connect', () => {
+      newSocket.emit('join-room', { roomId, name: localParticipantName });
+    });
+
     window.addEventListener('beforeunload', cleanupAllConnections);
 
     return () => {
       window.removeEventListener('beforeunload', cleanupAllConnections);
       cleanupAllConnections();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Should only run once
 
-  const createPeerConnection = useCallback((peerId: string, stream: MediaStream | null) => {
+  const createPeerConnection = useCallback((peerId: string, stream: MediaStream) => {
     if (peerConnectionsRef.current[peerId]) {
+      console.log(`Peer connection for ${peerId} already exists. Reusing.`);
       return peerConnectionsRef.current[peerId];
     }
+    console.log(`Creating new peer connection for ${peerId}`);
     const pc = new RTCPeerConnection(ICE_SERVERS);
     
     pc.onicecandidate = (event) => {
@@ -115,26 +122,33 @@ function RoomPage() {
       setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerName, stream: event.streams[0] }));
     };
 
-    if (stream) {
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    }
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
     
     peerConnectionsRef.current[peerId] = pc;
     return pc;
   }, [socket]);
 
 
-  // Effect to handle signaling
+  // Effect to handle signaling and chat
   useEffect(() => {
     if (!socket) return;
     
+    const handleExistingUsers = (users: {id: string, name: string}[]) => {
+      console.log('Received existing users list:', users);
+      users.forEach(user => {
+        if(user.id !== socket.id) {
+          participantInfoRef.current.set(user.id, { name: user.name });
+        }
+      });
+    };
+
     const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
       if (peerId === socket.id) return;
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
       participantInfoRef.current.set(peerId, { name: peerName });
 
       if (isInCall && localStream) {
-        console.log(`User ${peerName} joined. I'm in call, so I'll send them an offer.`);
+        console.log(`I'm in call. User ${peerName} joined. Sending them an offer.`);
         const pc = createPeerConnection(peerId, localStream);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -143,8 +157,8 @@ function RoomPage() {
     };
 
     const handleReceiveOffer = async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-      if (!isInCall || !localStream) {
-        console.log("Received offer but not ready, ignoring.");
+      if (!localStream) {
+        console.warn("Received offer but not in call, ignoring.");
         return;
       }
       console.log(`Received offer from ${data.name} (${data.caller})`);
@@ -189,10 +203,7 @@ function RoomPage() {
       participantInfoRef.current.delete(peerId);
     };
 
-    socket.on('connect', () => {
-      socket.emit('join-room', { roomId, name: localParticipantName });
-    });
-    
+    socket.on('existing-users', handleExistingUsers);
     socket.on('user-joined', handleUserJoined);
     socket.on('offer', handleReceiveOffer);
     socket.on('answer', handleReceiveAnswer);
@@ -207,6 +218,7 @@ function RoomPage() {
     });
 
     return () => {
+      socket.off('existing-users');
       socket.off('user-joined');
       socket.off('offer');
       socket.off('answer');
@@ -215,7 +227,7 @@ function RoomPage() {
       socket.off('receive-message');
       socket.off('previous-messages');
     };
-  }, [socket, roomId, localParticipantName, isInCall, localStream, createPeerConnection, cleanupPeerConnection, toast]);
+  }, [socket, isInCall, localStream, createPeerConnection, cleanupPeerConnection, toast, localParticipantName]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -227,8 +239,6 @@ function RoomPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
       setIsInCall(true);
-      setIsMicEnabled(true);
-      setIsVideoEnabled(true);
       
       // Proactively connect to anyone we know about who is already in the room
       for (const [peerId, peerInfo] of participantInfoRef.current.entries()) {
@@ -243,7 +253,7 @@ function RoomPage() {
       console.error('Error accessing media devices.', err);
       let errorMessage = 'Could not access camera/microphone.';
       if (err instanceof Error) {
-        if (err.name === "NotAllowedError") errorMessage = "Camera/microphone access denied. Please allow access in your browser settings to try again.";
+        if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") errorMessage = "Camera/microphone access denied. Please allow access in your browser settings to try again.";
         else if (err.name === "NotFoundError") errorMessage = "No camera/microphone found. Please ensure they are connected and enabled.";
       }
       setMediaError(errorMessage);
@@ -296,8 +306,12 @@ function RoomPage() {
   
   const remoteParticipantsArray = Array.from(remoteParticipants.values());
   const totalParticipants = (isInCall ? 1 : 0) + remoteParticipantsArray.length;
-  const videoGridCols = totalParticipants > 4 ? 'grid-cols-3' : totalParticipants > 1 ? 'grid-cols-2' : 'grid-cols-1';
-  const videoGridRows = totalParticipants > 2 ? 'grid-rows-2' : 'grid-rows-1';
+  
+  const gridClass = totalParticipants <= 1 ? 'grid-cols-1 grid-rows-1'
+                  : totalParticipants === 2 ? 'grid-cols-1 md:grid-cols-2 grid-rows-2 md:grid-rows-1'
+                  : totalParticipants <= 4 ? 'grid-cols-2 grid-rows-2'
+                  : 'grid-cols-2 lg:grid-cols-3 grid-rows-auto';
+
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -347,7 +361,7 @@ function RoomPage() {
             </div>
           ) : (
             <>
-              <div className={`flex-1 grid gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in ${videoGridCols} ${videoGridRows}`}>
+              <div className={`flex-1 grid gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in ${gridClass}`}>
                 {localStream && (
                   <VideoPlayer
                     stream={localStream}
@@ -404,5 +418,3 @@ function RoomPage() {
     </div>
   );
 }
-
-    

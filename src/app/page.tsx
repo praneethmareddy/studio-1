@@ -74,7 +74,7 @@ export default function HomePage() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Enter your name to join"
-              className="text-center text-lg py-7 placeholder:text-muted-foreground/70 focus:shadow-glow-primary-sm"
+              className="text-center text-lg py-6 md:py-7 placeholder:text-muted-foreground/70 focus:shadow-glow-primary-sm"
               aria-label="Enter your name"
               required
             />
@@ -82,7 +82,7 @@ export default function HomePage() {
 
           <Button
             onClick={handleCreateRoom}
-            className="w-full text-lg py-7 bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
+            className="w-full text-lg py-6 md:py-7 bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
             aria-label="Create a new chat room"
             size="lg"
             disabled={isCreateDisabled}
@@ -105,13 +105,13 @@ export default function HomePage() {
               value={roomIdInput}
               onChange={(e) => setRoomIdInput(e.target.value.toUpperCase())}
               placeholder="ENTER ROOM ID"
-              className="text-center text-lg tracking-widest py-7 placeholder:text-muted-foreground/70 focus:shadow-glow-primary-sm"
+              className="text-center text-lg tracking-widest py-6 md:py-7 placeholder:text-muted-foreground/70 focus:shadow-glow-primary-sm"
               aria-label="Enter Room ID to join"
             />
             <Button
               type="submit"
               variant="secondary"
-              className="w-full text-lg py-7 border border-primary/30 hover:border-primary/70 hover:bg-primary/10 hover:text-primary transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
+              className="w-full text-lg py-6 md:py-7 border border-primary/30 hover:border-primary/70 hover:bg-primary/10 hover:text-primary transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
               aria-label="Join existing room"
               disabled={isJoinDisabled}
               size="lg"
