@@ -23,7 +23,7 @@ export default function ChatMessage({ message, isCurrentUser }: ChatMessageProps
       case 'ai': return 'AI Assistant';
       case 'system': return 'System Notification';
       case 'user':
-      default: return isCurrentUser ? 'You' : 'Participant';
+      default: return message.senderName || (isCurrentUser ? 'You' : 'Participant');
     }
   };
 

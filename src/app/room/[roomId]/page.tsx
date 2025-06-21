@@ -1,8 +1,8 @@
 
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
 import ChatInput from '@/components/chat/ChatInput';
@@ -23,9 +23,27 @@ const ICE_SERVERS = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
-export default function RoomPage() {
+export default function RoomPageWrapper() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col items-center justify-center min-h-screen text-lg text-primary">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        Loading CommVerse Room...
+      </div>
+    }>
+      <RoomPage />
+    </Suspense>
+  );
+}
+
+
+function RoomPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const roomId = typeof params.roomId === 'string' ? params.roomId : '';
+  const localParticipantName = searchParams.get('name') || 'Anonymous';
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [mounted, setMounted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -43,6 +61,17 @@ export default function RoomPage() {
   const { toast } = useToast();
 
   useEffect(() => {
+    if (!searchParams.get('name')) {
+      toast({
+        title: 'Name Required',
+        description: 'You must provide a name to enter a room. Redirecting to home...',
+        variant: 'destructive',
+      });
+      router.push('/');
+    }
+  }, [searchParams, router, toast]);
+
+  useEffect(() => {
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
 
@@ -57,26 +86,28 @@ export default function RoomPage() {
     newSocket.on('ice-candidate', handleReceiveCandidate);
     newSocket.on('user-disconnected', handleUserDisconnected);
 
-    newSocket.on('receive-message', (data: { text: string, sender: string, timestamp?: string }) => {
+    newSocket.on('receive-message', (data: { text: string; senderId: string; senderName: string, timestamp: string }) => {
       const newMessage: Message = {
-        id: `${data.sender}-${data.timestamp || Date.now()}`,
+        id: `${data.senderId}-${data.timestamp || Date.now()}`,
         text: data.text,
         sender: 'user',
-        timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+        timestamp: new Date(data.timestamp),
         roomId: roomId,
-        userId: data.sender,
+        userId: data.senderId,
+        senderName: data.senderName,
       };
       setMessages(prev => [...prev, newMessage]);
     });
 
-    newSocket.on('previous-messages', (history: {text: string, sender: string, timestamp: string}[]) => {
+    newSocket.on('previous-messages', (history: {text: string, senderId: string, senderName: string, timestamp: string}[]) => {
        const formattedHistory: Message[] = history.map(item => ({
-         id: `${item.sender}-${item.timestamp}`,
+         id: `${item.senderId}-${item.timestamp}`,
          text: item.text,
          sender: 'user',
          timestamp: new Date(item.timestamp),
          roomId: roomId,
-         userId: item.sender,
+         userId: item.senderId,
+         senderName: item.senderName,
        }));
        setMessages(prev => [...formattedHistory, ...prev.filter(m => m.sender === 'system')]);
     });
@@ -98,6 +129,8 @@ export default function RoomPage() {
           sender: 'system',
           timestamp: new Date(),
           roomId: roomId,
+          userId: 'system',
+          senderName: 'System'
         }
       ]);
     }
@@ -111,7 +144,7 @@ export default function RoomPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const createPeerConnection = useCallback((peerId: string) => {
+  const createPeerConnection = useCallback((peerId: string, peerName: string) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
     pc.onicecandidate = (event) => {
@@ -121,13 +154,13 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (event) => {
-      console.log(`Received remote track from ${peerId}`);
+      console.log(`Received remote track from ${peerName} (${peerId})`);
       setRemoteParticipants(prev => {
-        const existingParticipant = prev.find(p => p.id === peerId);
-        if (existingParticipant) {
+        const participantExists = prev.some(p => p.id === peerId);
+        if (participantExists) {
           return prev.map(p => p.id === peerId ? { ...p, stream: event.streams[0] } : p);
         } else {
-          return [...prev, { id: peerId, name: `User ${peerId.substring(0, 4)}`, stream: event.streams[0] }];
+          return [...prev, { id: peerId, name: peerName, stream: event.streams[0] }];
         }
       });
     };
@@ -140,26 +173,28 @@ export default function RoomPage() {
     return pc;
   }, [localStream, socket]);
 
-  const handleUserJoined = useCallback(async (peerId: string) => {
-    toast({ title: 'User Joined', description: `A new user has entered the room.` });
-    console.log('New user joined:', peerId);
-    const pc = createPeerConnection(peerId);
+  const handleUserJoined = useCallback(async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
+    toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
+    console.log('New user joined:', peerName, peerId);
+    if (!localStream) return; // Don't send offer if we haven't started our call yet
+    
+    const pc = createPeerConnection(peerId, peerName);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    socket?.emit('offer', { target: peerId, sdp: offer });
-  }, [createPeerConnection, socket, toast]);
+    socket?.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
+  }, [createPeerConnection, socket, toast, localParticipantName, localStream]);
 
-  const handleReceiveOffer = useCallback(async (data: { caller: string, sdp: RTCSessionDescriptionInit }) => {
-    console.log('Received offer from:', data.caller);
-    const pc = createPeerConnection(data.caller);
+  const handleReceiveOffer = useCallback(async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
+    console.log('Received offer from:', data.name);
+    const pc = createPeerConnection(data.caller, data.name);
     await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    socket?.emit('answer', { target: data.caller, sdp: answer });
-  }, [createPeerConnection, socket]);
+    socket?.emit('answer', { target: data.caller, sdp: answer, name: localParticipantName });
+  }, [createPeerConnection, socket, localParticipantName]);
 
-  const handleReceiveAnswer = useCallback(async (data: { answerer: string, sdp: RTCSessionDescriptionInit }) => {
-    console.log('Received answer from:', data.answerer);
+  const handleReceiveAnswer = useCallback(async (data: { answerer: string, sdp: RTCSessionDescriptionInit, name: string }) => {
+    console.log('Received answer from:', data.name);
     const pc = peerConnectionsRef.current[data.answerer];
     if (pc) {
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -178,14 +213,15 @@ export default function RoomPage() {
   }, []);
 
   const handleUserDisconnected = useCallback((peerId: string) => {
-    toast({ title: 'User Left', description: `A user has left the room.` });
+    const leavingParticipant = remoteParticipants.find(p => p.id === peerId);
+    toast({ title: 'User Left', description: `${leavingParticipant?.name || 'A user'} has left the room.` });
     console.log('User disconnected:', peerId);
     if (peerConnectionsRef.current[peerId]) {
       peerConnectionsRef.current[peerId].close();
       delete peerConnectionsRef.current[peerId];
     }
     setRemoteParticipants(prev => prev.filter(p => p.id !== peerId));
-  }, [toast]);
+  }, [toast, remoteParticipants]);
 
   const joinCall = async () => {
     if (!socket) {
@@ -199,7 +235,7 @@ export default function RoomPage() {
       setIsCallActive(true);
       setIsMicEnabled(true);
       setIsVideoEnabled(true);
-      socket.emit('join-room', roomId);
+      socket.emit('join-room', { roomId, name: localParticipantName });
     } catch (err) {
       console.error('Error accessing media devices.', err);
       let errorMessage = 'Could not access camera/microphone.';
@@ -221,7 +257,8 @@ export default function RoomPage() {
     setRemoteParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-  }, [localStream, socket]);
+    router.push('/');
+  }, [localStream, socket, router]);
 
   const toggleMic = () => {
     if (localStream) {
@@ -249,6 +286,7 @@ export default function RoomPage() {
       timestamp: new Date(),
       roomId,
       userId: localParticipantId,
+      senderName: localParticipantName,
     };
     
     setMessages(prev => [...prev, newMessage]);
@@ -256,7 +294,6 @@ export default function RoomPage() {
     socket.emit('send-message', { 
         roomId, 
         message: text,
-        sender: localParticipantId 
     });
   };
 
@@ -311,7 +348,7 @@ export default function RoomPage() {
                   <VideoPlayer
                     stream={localStream}
                     isLocal
-                    name="You"
+                    name={localParticipantName}
                     isAudioEnabled={isMicEnabled}
                     isVideoEnabled={isVideoEnabled}
                   />

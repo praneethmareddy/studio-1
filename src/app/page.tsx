@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { generateRoomId } from '@/lib/roomUtils';
-import { MessageSquarePlus, LogIn, Sparkles } from 'lucide-react';
+import { MessageSquarePlus, LogIn, Sparkles, User } from 'lucide-react';
 
 export default function HomePage() {
   const [roomIdInput, setRoomIdInput] = useState('');
+  const [username, setUsername] = useState('');
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
 
@@ -18,16 +19,21 @@ export default function HomePage() {
   }, []);
 
   const handleCreateRoom = () => {
-    const newRoomId = generateRoomId();
-    router.push(`/room/${newRoomId}`);
+    if (username.trim()) {
+      const newRoomId = generateRoomId();
+      router.push(`/room/${newRoomId}?name=${encodeURIComponent(username.trim())}`);
+    }
   };
 
   const handleJoinRoom = (e: React.FormEvent) => {
     e.preventDefault();
-    if (roomIdInput.trim()) {
-      router.push(`/room/${roomIdInput.trim().toUpperCase()}`);
+    if (roomIdInput.trim() && username.trim()) {
+      router.push(`/room/${roomIdInput.trim().toUpperCase()}?name=${encodeURIComponent(username.trim())}`);
     }
   };
+
+  const isJoinDisabled = !roomIdInput.trim() || !username.trim();
+  const isCreateDisabled = !username.trim();
 
   if (!mounted) {
     return (
@@ -60,11 +66,26 @@ export default function HomePage() {
           <CardDescription className="text-lg text-muted-foreground">Connect and Converse Instantly</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6 pt-2">
+           <div className="space-y-2">
+            <label htmlFor="username" className="text-sm font-medium text-muted-foreground flex items-center gap-2 pl-1"><User className="h-4 w-4"/> Your Name</label>
+            <Input
+              id="username"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter your name to join"
+              className="text-center text-lg py-7 placeholder:text-muted-foreground/70 focus:shadow-glow-primary-sm"
+              aria-label="Enter your name"
+              required
+            />
+          </div>
+
           <Button
             onClick={handleCreateRoom}
             className="w-full text-lg py-7 bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
             aria-label="Create a new chat room"
             size="lg"
+            disabled={isCreateDisabled}
           >
             <MessageSquarePlus className="mr-2 h-6 w-6" /> Create New Room
           </Button>
@@ -92,7 +113,7 @@ export default function HomePage() {
               variant="secondary"
               className="w-full text-lg py-7 border border-primary/30 hover:border-primary/70 hover:bg-primary/10 hover:text-primary transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
               aria-label="Join existing room"
-              disabled={!roomIdInput.trim()}
+              disabled={isJoinDisabled}
               size="lg"
             >
               <LogIn className="mr-2 h-6 w-6" /> Join Room
