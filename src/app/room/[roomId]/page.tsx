@@ -14,7 +14,7 @@ import type { Message, RemoteParticipant } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Video as VideoIcon, Users, AlertTriangle, Loader2 } from 'lucide-react';
+import { Video as VideoIcon, Users, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const SIGNALING_SERVER_URL = 'http://localhost:5000';
@@ -125,7 +125,7 @@ function RoomPage() {
       setMessages([
         {
           id: 'system-welcome',
-          text: `Welcome to Room ${roomId}! Join the call to connect with others. Chat is enabled after joining the call.`,
+          text: `Welcome to Room ${roomId}! Join the call to connect with others.`,
           sender: 'system',
           timestamp: new Date(),
           roomId: roomId,
@@ -186,12 +186,16 @@ function RoomPage() {
 
   const handleReceiveOffer = useCallback(async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
     console.log('Received offer from:', data.name);
+    if (!localStream) {
+      // If we receive an offer but haven't started our call, start our call first
+      await joinCall(false); // Join call without re-emitting join-room
+    }
     const pc = createPeerConnection(data.caller, data.name);
     await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket?.emit('answer', { target: data.caller, sdp: answer, name: localParticipantName });
-  }, [createPeerConnection, socket, localParticipantName]);
+  }, [createPeerConnection, socket, localParticipantName, localStream]);
 
   const handleReceiveAnswer = useCallback(async (data: { answerer: string, sdp: RTCSessionDescriptionInit, name: string }) => {
     console.log('Received answer from:', data.name);
@@ -223,7 +227,7 @@ function RoomPage() {
     setRemoteParticipants(prev => prev.filter(p => p.id !== peerId));
   }, [toast, remoteParticipants]);
 
-  const joinCall = async () => {
+  const joinCall = async (emitJoinEvent = true) => {
     if (!socket) {
       toast({ title: 'Error', description: 'Not connected to signaling server.', variant: 'destructive' });
       return;
@@ -235,12 +239,14 @@ function RoomPage() {
       setIsCallActive(true);
       setIsMicEnabled(true);
       setIsVideoEnabled(true);
-      socket.emit('join-room', { roomId, name: localParticipantName });
+      if (emitJoinEvent) {
+         socket.emit('join-room', { roomId, name: localParticipantName });
+      }
     } catch (err) {
       console.error('Error accessing media devices.', err);
       let errorMessage = 'Could not access camera/microphone.';
       if (err instanceof Error) {
-        if (err.name === "NotAllowedError") errorMessage = "Camera/microphone access denied. Please allow access in your browser settings.";
+        if (err.name === "NotAllowedError") errorMessage = "Camera/microphone access denied. Please allow access in your browser settings to try again.";
         else if (err.name === "NotFoundError") errorMessage = "No camera/microphone found. Please ensure they are connected and enabled.";
       }
       setMediaError(errorMessage);
@@ -325,19 +331,30 @@ function RoomPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {mediaError && (
-                    <div className="mb-4 p-3 bg-destructive/10 border border-destructive text-destructive rounded-md text-sm flex items-center gap-2 animate-shake">
-                      <AlertTriangle className="h-5 w-5 shrink-0" />
-                      <p>{mediaError}</p>
+                  {mediaError ? (
+                    <div className="space-y-4">
+                      <div className="p-3 bg-destructive/10 border border-destructive text-destructive rounded-md text-sm flex items-center gap-2 animate-shake">
+                        <AlertTriangle className="h-5 w-5 shrink-0" />
+                        <p>{mediaError}</p>
+                      </div>
+                      <Button
+                        onClick={() => setMediaError(null)}
+                        size="lg"
+                        variant="outline"
+                        className="w-full py-7 text-lg"
+                      >
+                        <RefreshCw className="mr-2 h-6 w-6" /> Try Again
+                      </Button>
                     </div>
+                  ) : (
+                    <Button
+                      onClick={() => joinCall()}
+                      size="lg"
+                      className="w-full py-7 text-lg bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
+                    >
+                      <VideoIcon className="mr-2 h-6 w-6" /> Join Call
+                    </Button>
                   )}
-                  <Button
-                    onClick={joinCall}
-                    size="lg"
-                    className="w-full py-7 text-lg bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
-                  >
-                    <VideoIcon className="mr-2 h-6 w-6" /> Join Call
-                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -348,7 +365,7 @@ function RoomPage() {
                   <VideoPlayer
                     stream={localStream}
                     isLocal
-                    name={localParticipantName}
+                    name={`${localParticipantName} (You)`}
                     isAudioEnabled={isMicEnabled}
                     isVideoEnabled={isVideoEnabled}
                   />
