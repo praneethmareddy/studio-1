@@ -36,7 +36,6 @@ export default function RoomPageWrapper() {
   );
 }
 
-
 function RoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -45,22 +44,22 @@ function RoomPage() {
   const localParticipantName = searchParams.get('name') || 'Anonymous';
   
   const [messages, setMessages] = useState<Message[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
   const [socket, setSocket] = useState<Socket | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
-  const participantNamesRef = useRef<Map<string, string>>(new Map());
   const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([]);
-
-  const [isMediaReady, setIsMediaReady] = useState(false);
+  
+  const [isInCall, setIsInCall] = useState(false);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [mediaError, setMediaError] = useState<string | null>(null);
+
+  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
+  const participantNamesRef = useRef<Map<string, string>>(new Map());
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const cleanupConnections = useCallback(() => {
-    console.log("Cleaning up connections.");
+    console.log("Cleaning up all connections for page unload.");
     localStream?.getTracks().forEach(track => track.stop());
     Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
     peerConnectionsRef.current = {};
@@ -77,7 +76,6 @@ function RoomPage() {
       router.push('/');
       return;
     }
-
     window.addEventListener('beforeunload', cleanupConnections);
     return () => {
       window.removeEventListener('beforeunload', cleanupConnections);
@@ -85,27 +83,17 @@ function RoomPage() {
     };
   }, [searchParams, router, toast, cleanupConnections]);
 
-  // Effect to handle signaling connection once media is ready
   useEffect(() => {
-    if (!isMediaReady || !roomId || !localParticipantName || !localStream) return;
+    if (!roomId || !localParticipantName) return;
 
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
 
-    // All signaling handlers are defined inside the effect to avoid dependency loops.
-    const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
-      if (peerId === newSocket.id) return;
-      toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
-      console.log(`User joined: ${peerName} (${peerId}). Creating offer...`);
-      participantNamesRef.current.set(peerId, peerName);
-      
+    const createPeerConnection = (peerId: string, peerName: string) => {
       const pc = new RTCPeerConnection(ICE_SERVERS);
-      peerConnectionsRef.current[peerId] = pc;
       
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
       pc.onicecandidate = (event) => {
-        if (event.candidate && newSocket) {
+        if (event.candidate) {
           newSocket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
         }
       };
@@ -120,46 +108,46 @@ function RoomPage() {
           return prev.map(p => p.id === peerId ? { ...p, stream: event.streams[0] } : p);
         });
       };
+      
+      if (localStream) {
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      }
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      newSocket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
+      peerConnectionsRef.current[peerId] = pc;
+      return pc;
+    };
+    
+    const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
+      if (peerId === newSocket.id) return;
+      toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
+      console.log(`User joined: ${peerName} (${peerId}). Creating offer if in call...`);
+      participantNamesRef.current.set(peerId, peerName);
+      
+      const pc = createPeerConnection(peerId, peerName);
+
+      if (isInCall && localStream) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        newSocket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
+      }
     };
 
     const handleReceiveOffer = async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-      if (!localStream) return;
+      if (!isInCall || !localStream) {
+        console.log("Received offer but not in call, ignoring for now.");
+        return;
+      }
       console.log(`Received offer from ${data.name} (${data.caller})`);
       participantNamesRef.current.set(data.caller, data.name);
-      const pc = new RTCPeerConnection(ICE_SERVERS);
-      peerConnectionsRef.current[data.caller] = pc;
+      const pc = createPeerConnection(data.caller, data.name);
       
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate && newSocket) {
-          newSocket.emit('ice-candidate', { target: data.caller, candidate: event.candidate });
-        }
-      };
-
-       pc.ontrack = (event) => {
-        console.log(`Received remote track from ${data.name} (${data.caller})`);
-        setRemoteParticipants(prev => {
-          const participantExists = prev.some(p => p.id === data.caller);
-          if (!participantExists) {
-            return [...prev, { id: data.caller, name: data.name, stream: event.streams[0] }];
-          }
-          return prev.map(p => p.id === data.caller ? { ...p, stream: event.streams[0] } : p);
-        });
-      };
-
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       newSocket.emit('answer', { target: data.caller, sdp: answer, name: localParticipantName });
     };
 
-    const handleReceiveAnswer = async (data: { answerer: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-      console.log(`Received answer from ${data.name} (${data.answerer})`);
+    const handleReceiveAnswer = async (data: { answerer: string, sdp: RTCSessionDescriptionInit }) => {
       const pc = peerConnectionsRef.current[data.answerer];
       if (pc) {
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -180,7 +168,6 @@ function RoomPage() {
     const handleUserDisconnected = (peerId: string) => {
       const leavingParticipantName = participantNamesRef.current.get(peerId) || 'A user';
       toast({ title: 'User Left', description: `${leavingParticipantName} has left the room.` });
-      console.log(`User disconnected: ${peerId}`);
       
       if (peerConnectionsRef.current[peerId]) {
         peerConnectionsRef.current[peerId].close();
@@ -191,7 +178,6 @@ function RoomPage() {
     };
 
     newSocket.on('connect', () => {
-      console.log('Connected to signaling server with ID:', newSocket.id);
       newSocket.emit('join-room', { roomId, name: localParticipantName });
     });
     
@@ -200,44 +186,38 @@ function RoomPage() {
     newSocket.on('answer', handleReceiveAnswer);
     newSocket.on('ice-candidate', handleReceiveCandidate);
     newSocket.on('user-disconnected', handleUserDisconnected);
-
-    newSocket.on('receive-message', (newMessage: Omit<Message, 'sender'>) => {
-      const finalMessage: Message = { ...newMessage, sender: 'user' };
-      setMessages(prev => [...prev, finalMessage]);
+    
+    newSocket.on('receive-message', (newMessage: Message) => {
+      setMessages(prev => [...prev, newMessage]);
     });
-
-    newSocket.on('previous-messages', (history: Omit<Message, 'sender'>[]) => {
-       const historyWithSender = history.map(msg => ({ ...msg, sender: 'user' as const }));
-       setMessages(historyWithSender);
+    newSocket.on('previous-messages', (history: Message[]) => {
+       setMessages(history);
     });
 
     return () => {
-      newSocket.off('user-joined', handleUserJoined);
-      newSocket.off('offer', handleReceiveOffer);
-      newSocket.off('answer', handleReceiveAnswer);
-      newSocket.off('ice-candidate', handleReceiveCandidate);
-      newSocket.off('user-disconnected', handleUserDisconnected);
+      newSocket.off('user-joined');
+      newSocket.off('offer');
+      newSocket.off('answer');
+      newSocket.off('ice-candidate');
+      newSocket.off('user-disconnected');
       newSocket.off('receive-message');
       newSocket.off('previous-messages');
       newSocket.disconnect();
     };
-  }, [isMediaReady, roomId, localParticipantName, localStream, toast]);
-
+  }, [roomId, localParticipantName, router, toast, isInCall, localStream]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, [messages]);
 
   const joinCall = async () => {
     setMediaError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
-      setIsMediaReady(true);
+      setIsInCall(true);
+      setIsMicEnabled(true);
+      setIsVideoEnabled(true);
     } catch (err) {
       console.error('Error accessing media devices.', err);
       let errorMessage = 'Could not access camera/microphone.';
@@ -246,14 +226,21 @@ function RoomPage() {
         else if (err.name === "NotFoundError") errorMessage = "No camera/microphone found. Please ensure they are connected and enabled.";
       }
       setMediaError(errorMessage);
-      toast({ title: 'Media Access Error', description: errorMessage, variant: 'destructive' });
     }
   };
 
   const leaveCall = useCallback(() => {
-    cleanupConnections();
-    router.push('/');
-  }, [cleanupConnections, router]);
+    localStream?.getTracks().forEach(track => track.stop());
+    setLocalStream(null);
+    setIsInCall(false);
+    
+    Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+    peerConnectionsRef.current = {};
+    setRemoteParticipants([]);
+    // Re-emit join to re-establish non-video presence if necessary
+    socket?.emit('join-room', { roomId, name: localParticipantName });
+
+  }, [localStream, socket, roomId, localParticipantName]);
 
   const toggleMic = () => {
     if (localStream) {
@@ -275,7 +262,6 @@ function RoomPage() {
     if (!socket || !text.trim()) return;
     socket.emit('send-message', { roomId, message: text });
     
-    // Optimistic UI update
     const myMessage: Message = {
       id: `${socket.id!}-${Date.now()}`,
       roomId,
@@ -288,7 +274,7 @@ function RoomPage() {
     setMessages(prev => [...prev, myMessage]);
   };
   
-  const totalParticipants = 1 + remoteParticipants.length;
+  const totalParticipants = (isInCall ? 1 : 0) + remoteParticipants.length;
   const videoGridCols = totalParticipants > 4 ? 'grid-cols-3' : totalParticipants > 1 ? 'grid-cols-2' : 'grid-cols-1';
   const videoGridRows = totalParticipants > 2 ? 'grid-rows-2' : 'grid-rows-1';
 
@@ -298,7 +284,7 @@ function RoomPage() {
 
       <div className="flex flex-1 overflow-hidden md:flex-row flex-col">
         <main className="flex-1 flex flex-col p-2 md:p-4 overflow-hidden">
-          {!isMediaReady ? (
+          {!isInCall ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-card/50 rounded-lg shadow-inner p-6 animate-fade-in">
               <Card className="p-6 md:p-10 text-center shadow-xl max-w-md w-full border-border/50 hover:shadow-2xl transition-shadow duration-300">
                 <CardHeader>
@@ -387,7 +373,7 @@ function RoomPage() {
             <div ref={messagesEndRef} />
           </ScrollArea>
           
-          <ChatInput onSendMessage={handleSendMessage} disabled={!isMediaReady} />
+          <ChatInput onSendMessage={handleSendMessage} disabled={!socket} />
           
           <div className="border-t border-border/50 bg-background/30">
             <TopicSuggestion messages={messages} />

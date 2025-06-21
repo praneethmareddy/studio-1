@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState } from 'react';
@@ -27,7 +28,7 @@ export default function ChatInput({ onSendMessage, disabled }: ChatInputProps) {
         type="text"
         value={messageText}
         onChange={(e) => setMessageText(e.target.value)}
-        placeholder="Type your message..."
+        placeholder={disabled ? "Connecting to chat..." : "Type your message..."}
         className="flex-grow focus-visible:ring-primary focus-visible:shadow-glow-primary-sm text-base py-3 h-auto"
         disabled={disabled}
         aria-label="Chat message input"

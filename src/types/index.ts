@@ -7,6 +7,7 @@ export interface Message {
   roomId: string;
   userId: string; 
   senderName: string;
+  senderId?: string; // from backend
 }
 
 export interface RemoteParticipant {
