@@ -89,12 +89,12 @@ export default function ChatMessage({ message, isCurrentUser }: ChatMessageProps
       </Avatar>
       
       <div className={cn(
-        "flex flex-col p-3 rounded-xl",
+        "flex flex-col p-3 rounded-xl min-w-0",
         messageBg,
         isCurrentUser ? 'rounded-br-none' : 'rounded-bl-none'
       )}>
         <p className={cn(
-          "font-semibold text-sm mb-0.5", 
+          "font-semibold text-sm mb-0.5 break-words", 
            isCurrentUser ? 'text-primary-foreground/90' : 'text-foreground/90'
         )}>
           {senderName}

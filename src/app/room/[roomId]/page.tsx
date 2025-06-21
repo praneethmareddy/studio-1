@@ -7,7 +7,7 @@ import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
 import ChatInput from '@/components/chat/ChatInput';
 import ChatMessage from '@/components/chat/ChatMessage';
-import TopicSuggestion from '@/components/chat/TopicSuggestion';
+import ChatSummary from '@/components/chat/ChatSummary';
 import VideoPlayer from '@/components/chat/VideoPlayer';
 import CallControls from '@/components/chat/CallControls';
 import type { Message, RemoteParticipant } from '@/types';
@@ -139,7 +139,6 @@ function RoomPage() {
       return pc;
     };
     
-    // When you join, you get a list of users already in the room
     const handleExistingUsers = (users: {id: string, name: string}[]) => {
       console.log('Received existing users list:', users);
       users.forEach(user => {
@@ -149,13 +148,11 @@ function RoomPage() {
       });
     };
 
-    // When a new user joins, you are notified
     const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
       if (peerId === socket.id) return;
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
       participantInfoRef.current.set(peerId, { name: peerName });
 
-      // If you are already in a call, send an offer to the new user.
       if (isInCall && localStream) {
         console.log(`I'm in call. User ${peerName} joined. Sending them an offer.`);
         const pc = createPeerConnection(peerId, localStream);
@@ -246,33 +243,38 @@ function RoomPage() {
 
   const joinCall = async () => {
     setMediaError(null);
+    if (!socket) {
+      toast({ title: "Not Connected", description: "Cannot join call, not connected to server.", variant: "destructive" });
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
       setIsInCall(true);
-      
-      // Proactively connect to anyone we know about who is already in the room
+
       for (const [peerId, peerInfo] of participantInfoRef.current.entries()) {
-          console.log(`Initiating call with existing user ${peerInfo.name}`);
-          const pc = new RTCPeerConnection(ICE_SERVERS);
-      
-          pc.onicecandidate = (event) => {
-            if (event.candidate && socket) {
-              socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
-            }
-          };
+        if (peerId === socket.id) continue;
+        console.log(`Initiating call with existing user ${peerInfo.name} (${peerId})`);
+        
+        const pc = new RTCPeerConnection(ICE_SERVERS);
+        peerConnectionsRef.current[peerId] = pc;
+    
+        pc.onicecandidate = (event) => {
+          if (event.candidate && socket) {
+            socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+          }
+        };
 
-          pc.ontrack = (event) => {
-            setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerInfo.name, stream: event.streams[0] }));
-          };
+        pc.ontrack = (event) => {
+          console.log(`Received remote track from ${peerInfo.name} (${peerId}) on initial connection`);
+          setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerInfo.name, stream: event.streams[0] }));
+        };
 
-          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-          peerConnectionsRef.current[peerId] = pc;
-          
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket?.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
       }
 
     } catch (err) {
@@ -295,7 +297,6 @@ function RoomPage() {
     setRemoteParticipants(new Map());
 
     socket?.emit('leave-call', { roomId });
-
   }, [localStream, socket, roomId, cleanupPeerConnection]);
 
   const toggleMic = () => {
@@ -341,7 +342,7 @@ function RoomPage() {
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      <RoomHeader roomId={roomId} />
+      <RoomHeader roomId={roomId} participantCount={totalParticipants} />
 
       <div className="flex flex-1 overflow-hidden md:flex-row flex-col">
         <main className="flex-1 flex flex-col p-2 md:p-4 overflow-hidden">
@@ -437,7 +438,7 @@ function RoomPage() {
           <ChatInput onSendMessage={handleSendMessage} disabled={!socket} />
           
           <div className="border-t border-border/50 bg-background/30">
-            <TopicSuggestion messages={messages} />
+            <ChatSummary messages={messages} />
           </div>
         </aside>
       </div>
