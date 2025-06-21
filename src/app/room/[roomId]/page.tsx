@@ -85,109 +85,110 @@ function RoomPage() {
     };
   }, [searchParams, router, toast, cleanupConnections]);
 
-  const handleUserJoined = useCallback(async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
-    if (peerId === socket?.id || !localStream) return;
-    toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
-    console.log(`User joined: ${peerName} (${peerId}). Creating offer...`);
-    participantNamesRef.current.set(peerId, peerName);
-    
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    peerConnectionsRef.current[peerId] = pc;
-    
-    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socket) {
-        socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
-      }
-    };
-
-    pc.ontrack = (event) => {
-      console.log(`Received remote track from ${peerName} (${peerId})`);
-      setRemoteParticipants(prev => {
-        const participantExists = prev.some(p => p.id === peerId);
-        if (!participantExists) {
-          return [...prev, { id: peerId, name: peerName, stream: event.streams[0] }];
-        }
-        return prev;
-      });
-    };
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
-  }, [socket, localStream, localParticipantName, toast]);
-
-  const handleReceiveOffer = useCallback(async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-    if (!localStream) return;
-    console.log(`Received offer from ${data.name} (${data.caller})`);
-    participantNamesRef.current.set(data.caller, data.name);
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    peerConnectionsRef.current[data.caller] = pc;
-    
-    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socket) {
-        socket.emit('ice-candidate', { target: data.caller, candidate: event.candidate });
-      }
-    };
-
-     pc.ontrack = (event) => {
-      console.log(`Received remote track from ${data.name} (${data.caller})`);
-      setRemoteParticipants(prev => {
-        const participantExists = prev.some(p => p.id === data.caller);
-        if (!participantExists) {
-          return [...prev, { id: data.caller, name: data.name, stream: event.streams[0] }];
-        }
-        return prev;
-      });
-    };
-
-    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('answer', { target: data.caller, sdp: answer, name: localParticipantName });
-  }, [socket, localStream, localParticipantName]);
-
-  const handleReceiveAnswer = useCallback(async (data: { answerer: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-    console.log(`Received answer from ${data.name} (${data.answerer})`);
-    const pc = peerConnectionsRef.current[data.answerer];
-    if (pc) {
-      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-    }
-  }, []);
-
-  const handleReceiveCandidate = useCallback(async (data: { from: string, candidate: RTCIceCandidateInit }) => {
-    const pc = peerConnectionsRef.current[data.from];
-    if (pc) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (error) {
-        console.error("Error adding received ICE candidate", error);
-      }
-    }
-  }, []);
-
-  const handleUserDisconnected = useCallback((peerId: string) => {
-    const leavingParticipantName = participantNamesRef.current.get(peerId) || 'A user';
-    toast({ title: 'User Left', description: `${leavingParticipantName} has left the room.` });
-    console.log(`User disconnected: ${peerId}`);
-    
-    if (peerConnectionsRef.current[peerId]) {
-      peerConnectionsRef.current[peerId].close();
-      delete peerConnectionsRef.current[peerId];
-    }
-    setRemoteParticipants(prev => prev.filter(p => p.id !== peerId));
-    participantNamesRef.current.delete(peerId);
-  }, [toast]);
-
   // Effect to handle signaling connection once media is ready
   useEffect(() => {
-    if (!isMediaReady || !roomId || !localParticipantName) return;
+    if (!isMediaReady || !roomId || !localParticipantName || !localStream) return;
 
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
+
+    // All signaling handlers are defined inside the effect to avoid dependency loops.
+    const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
+      if (peerId === newSocket.id) return;
+      toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
+      console.log(`User joined: ${peerName} (${peerId}). Creating offer...`);
+      participantNamesRef.current.set(peerId, peerName);
+      
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      peerConnectionsRef.current[peerId] = pc;
+      
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && newSocket) {
+          newSocket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+        }
+      };
+
+      pc.ontrack = (event) => {
+        console.log(`Received remote track from ${peerName} (${peerId})`);
+        setRemoteParticipants(prev => {
+          const participantExists = prev.some(p => p.id === peerId);
+          if (!participantExists) {
+            return [...prev, { id: peerId, name: peerName, stream: event.streams[0] }];
+          }
+          return prev.map(p => p.id === peerId ? { ...p, stream: event.streams[0] } : p);
+        });
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      newSocket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
+    };
+
+    const handleReceiveOffer = async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
+      if (!localStream) return;
+      console.log(`Received offer from ${data.name} (${data.caller})`);
+      participantNamesRef.current.set(data.caller, data.name);
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      peerConnectionsRef.current[data.caller] = pc;
+      
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && newSocket) {
+          newSocket.emit('ice-candidate', { target: data.caller, candidate: event.candidate });
+        }
+      };
+
+       pc.ontrack = (event) => {
+        console.log(`Received remote track from ${data.name} (${data.caller})`);
+        setRemoteParticipants(prev => {
+          const participantExists = prev.some(p => p.id === data.caller);
+          if (!participantExists) {
+            return [...prev, { id: data.caller, name: data.name, stream: event.streams[0] }];
+          }
+          return prev.map(p => p.id === data.caller ? { ...p, stream: event.streams[0] } : p);
+        });
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      newSocket.emit('answer', { target: data.caller, sdp: answer, name: localParticipantName });
+    };
+
+    const handleReceiveAnswer = async (data: { answerer: string, sdp: RTCSessionDescriptionInit, name: string }) => {
+      console.log(`Received answer from ${data.name} (${data.answerer})`);
+      const pc = peerConnectionsRef.current[data.answerer];
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      }
+    };
+
+    const handleReceiveCandidate = async (data: { from: string, candidate: RTCIceCandidateInit }) => {
+      const pc = peerConnectionsRef.current[data.from];
+      if (pc) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (error) {
+          console.error("Error adding received ICE candidate", error);
+        }
+      }
+    };
+
+    const handleUserDisconnected = (peerId: string) => {
+      const leavingParticipantName = participantNamesRef.current.get(peerId) || 'A user';
+      toast({ title: 'User Left', description: `${leavingParticipantName} has left the room.` });
+      console.log(`User disconnected: ${peerId}`);
+      
+      if (peerConnectionsRef.current[peerId]) {
+        peerConnectionsRef.current[peerId].close();
+        delete peerConnectionsRef.current[peerId];
+      }
+      setRemoteParticipants(prev => prev.filter(p => p.id !== peerId));
+      participantNamesRef.current.delete(peerId);
+    };
 
     newSocket.on('connect', () => {
       console.log('Connected to signaling server with ID:', newSocket.id);
@@ -200,18 +201,27 @@ function RoomPage() {
     newSocket.on('ice-candidate', handleReceiveCandidate);
     newSocket.on('user-disconnected', handleUserDisconnected);
 
-    newSocket.on('receive-message', (newMessage: Omit<Message, 'id'> & { id?: string }) => {
-      setMessages(prev => [...prev, { ...newMessage, id: newMessage.id || `${socket?.id}-${Date.now()}` }]);
+    newSocket.on('receive-message', (newMessage: Omit<Message, 'sender'>) => {
+      const finalMessage: Message = { ...newMessage, sender: 'user' };
+      setMessages(prev => [...prev, finalMessage]);
     });
 
-    newSocket.on('previous-messages', (history: Message[]) => {
-       setMessages(history);
+    newSocket.on('previous-messages', (history: Omit<Message, 'sender'>[]) => {
+       const historyWithSender = history.map(msg => ({ ...msg, sender: 'user' as const }));
+       setMessages(historyWithSender);
     });
 
     return () => {
+      newSocket.off('user-joined', handleUserJoined);
+      newSocket.off('offer', handleReceiveOffer);
+      newSocket.off('answer', handleReceiveAnswer);
+      newSocket.off('ice-candidate', handleReceiveCandidate);
+      newSocket.off('user-disconnected', handleUserDisconnected);
+      newSocket.off('receive-message');
+      newSocket.off('previous-messages');
       newSocket.disconnect();
     };
-  }, [isMediaReady, roomId, localParticipantName, handleUserJoined, handleReceiveOffer, handleReceiveAnswer, handleReceiveCandidate, handleUserDisconnected]);
+  }, [isMediaReady, roomId, localParticipantName, localStream, toast]);
 
 
   useEffect(() => {
@@ -264,6 +274,18 @@ function RoomPage() {
   const handleSendMessage = (text: string) => {
     if (!socket || !text.trim()) return;
     socket.emit('send-message', { roomId, message: text });
+    
+    // Optimistic UI update
+    const myMessage: Message = {
+      id: `${socket.id!}-${Date.now()}`,
+      roomId,
+      text,
+      sender: 'user',
+      timestamp: new Date(),
+      userId: socket.id!,
+      senderName: localParticipantName
+    };
+    setMessages(prev => [...prev, myMessage]);
   };
   
   const totalParticipants = 1 + remoteParticipants.length;
