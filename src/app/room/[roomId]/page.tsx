@@ -57,22 +57,22 @@ export default function RoomPage() {
     newSocket.on('ice-candidate', handleReceiveCandidate);
     newSocket.on('user-disconnected', handleUserDisconnected);
 
-    newSocket.on('receive-message', (data: { message: string, sender: string, timestamp: string }) => {
+    newSocket.on('receive-message', (data: { text: string, sender: string, timestamp?: string }) => {
       const newMessage: Message = {
-        id: `${data.sender}-${data.timestamp}`,
-        text: data.message,
+        id: `${data.sender}-${data.timestamp || Date.now()}`,
+        text: data.text,
         sender: 'user',
-        timestamp: new Date(data.timestamp),
+        timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
         roomId: roomId,
         userId: data.sender,
       };
       setMessages(prev => [...prev, newMessage]);
     });
 
-    newSocket.on('previous-messages', (history: {message: string, sender: string, timestamp: string}[]) => {
+    newSocket.on('previous-messages', (history: {text: string, sender: string, timestamp: string}[]) => {
        const formattedHistory: Message[] = history.map(item => ({
          id: `${item.sender}-${item.timestamp}`,
-         text: item.message,
+         text: item.text,
          sender: 'user',
          timestamp: new Date(item.timestamp),
          roomId: roomId,
@@ -94,7 +94,7 @@ export default function RoomPage() {
       setMessages([
         {
           id: 'system-welcome',
-          text: `Welcome to Room ${roomId}! Join the call to connect with others.`,
+          text: `Welcome to Room ${roomId}! Join the call to connect with others. Chat is enabled after joining the call.`,
           sender: 'system',
           timestamp: new Date(),
           roomId: roomId,
