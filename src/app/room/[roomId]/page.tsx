@@ -41,11 +41,11 @@ export default function RoomPage() {
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const { toast } = useToast();
-  
+
   useEffect(() => {
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
-    
+
     newSocket.on('connect', () => {
       console.log('Connected to signaling server with ID:', newSocket.id);
       setLocalParticipantId(newSocket.id);
@@ -56,14 +56,37 @@ export default function RoomPage() {
     newSocket.on('answer', handleReceiveAnswer);
     newSocket.on('ice-candidate', handleReceiveCandidate);
     newSocket.on('user-disconnected', handleUserDisconnected);
-    newSocket.on('receive-message', handleReceiveMessage);
+
+    newSocket.on('receive-message', (data: { text: string, sender: string, timestamp: string }) => {
+      const newMessage: Message = {
+        id: `${data.sender}-${data.timestamp}`,
+        text: data.text,
+        sender: 'user',
+        timestamp: new Date(data.timestamp),
+        roomId: roomId,
+        userId: data.sender,
+      };
+      setMessages(prev => [...prev, newMessage]);
+    });
+
+    newSocket.on('previous-messages', (history: any[]) => {
+       const formattedHistory: Message[] = history.map(item => ({
+         id: `${item.sender}-${item.timestamp}`,
+         text: item.text,
+         sender: 'user',
+         timestamp: new Date(item.timestamp),
+         roomId: roomId,
+         userId: item.sender,
+       }));
+       setMessages(prev => [...formattedHistory, ...prev.filter(m => m.sender === 'system')]);
+    });
 
     return () => {
       newSocket.disconnect();
       Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
       peerConnectionsRef.current = {};
     };
-  }, []);
+  }, [roomId]); // Add roomId as a dependency
 
   useEffect(() => {
     setMounted(true);
@@ -87,7 +110,7 @@ export default function RoomPage() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
-  
+
   const createPeerConnection = useCallback((peerId: string) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
@@ -96,7 +119,7 @@ export default function RoomPage() {
         socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
       }
     };
-    
+
     pc.ontrack = (event) => {
       console.log(`Received remote track from ${peerId}`);
       setRemoteParticipants(prev => {
@@ -112,11 +135,11 @@ export default function RoomPage() {
     if (localStream) {
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
     }
-    
+
     peerConnectionsRef.current[peerId] = pc;
     return pc;
   }, [localStream, socket]);
-  
+
   const handleUserJoined = useCallback(async (peerId: string) => {
     toast({ title: 'User Joined', description: `A new user has entered the room.` });
     console.log('New user joined:', peerId);
@@ -142,7 +165,7 @@ export default function RoomPage() {
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
     }
   }, []);
-  
+
   const handleReceiveCandidate = useCallback(async (data: { from: string, candidate: RTCIceCandidateInit }) => {
     const pc = peerConnectionsRef.current[data.from];
     if (pc) {
@@ -163,10 +186,6 @@ export default function RoomPage() {
     }
     setRemoteParticipants(prev => prev.filter(p => p.id !== peerId));
   }, [toast]);
-  
-  const handleReceiveMessage = useCallback((message: Message) => {
-    setMessages(prev => [...prev, message]);
-  }, []);
 
   const joinCall = async () => {
     if (!socket) {
@@ -194,20 +213,15 @@ export default function RoomPage() {
   };
 
   const leaveCall = useCallback(() => {
-    socket?.disconnect();
-    
+    socket?.emit('disconnect'); // Gracefully disconnect
     localStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
-    
     Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
     peerConnectionsRef.current = {};
-    
     setRemoteParticipants([]);
     setIsCallActive(false);
     setMediaError(null);
-    
-    const newSocket = io(SIGNALING_SERVER_URL);
-    setSocket(newSocket);
+    // You might want to re-initiate socket connection or navigate away
   }, [localStream, socket]);
 
   const toggleMic = () => {
@@ -242,9 +256,13 @@ export default function RoomPage() {
     setMessages(prev => [...prev, newMessage]);
     
     // Send message to server to broadcast to others
-    socket.emit('send-message', { roomId, message: newMessage });
+    socket.emit('send-message', { 
+        roomId, 
+        message: text,
+        sender: localParticipantId 
+    });
   };
-  
+
   if (!mounted || !roomId) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen text-lg text-primary animate-fade-in">
