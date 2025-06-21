@@ -301,10 +301,10 @@ export default function RoomPage() {
             </div>
             <div ref={messagesEndRef} />
           </ScrollArea>
-          {/* ChatInput now indicates that sending a message would ideally go to a backend */}
+          
           <ChatInput onSendMessage={handleSendMessage} /> 
           
-          <div className="border-t border-border/50">
+          <div className="border-t border-border/50 bg-background/30">
             <TopicSuggestion messages={messages} />
           </div>
         </aside>
