@@ -38,6 +38,10 @@ export default function RoomHeader({ roomId, participantCount }: RoomHeaderProps
     >
       <div className="container mx-auto flex justify-between items-center gap-4">
         <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 text-primary">
+          <Users className="h-6 w-6" />
+          <span className="text-xl font-bold">{participantCount}</span>
+        </div>
           <h1 className="text-2xl md:text-3xl font-headline font-semibold text-primary tracking-tight whitespace-nowrap">
             Room: <span className="font-bold text-accent">{roomId}</span>
           </h1>
@@ -51,10 +55,7 @@ export default function RoomHeader({ roomId, participantCount }: RoomHeaderProps
             <Copy className="h-5 w-5 group-hover:animate-pulse" />
           </Button>
         </div>
-        <div className="flex items-center gap-2 text-primary">
-          <Users className="h-6 w-6" />
-          <span className="text-xl font-bold">{participantCount}</span>
-        </div>
+       
       </div>
     </header>
   );
