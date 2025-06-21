@@ -1,7 +1,6 @@
-
 'use client';
 
-import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
+import { useEffect, useState, useRef, useCallback, Suspense, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
@@ -14,7 +13,9 @@ import type { Message, RemoteParticipant } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Video as VideoIcon, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Video as VideoIcon, AlertTriangle, Loader2, RefreshCw, Users } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const SIGNALING_SERVER_URL = 'http://localhost:5000';
@@ -47,14 +48,14 @@ function RoomPage() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<Map<string, RemoteParticipant>>(new Map());
-  
+  const [allParticipants, setAllParticipants] = useState<{ id: string; name: string }[]>([]);
+
   const [isInCall, setIsInCall] = useState(false);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
-  const participantInfoRef = useRef<Map<string, { name: string }>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -79,6 +80,7 @@ function RoomPage() {
 
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
+    setAllParticipants([{ id: newSocket.id, name: localParticipantName }]);
 
     const cleanupAllConnections = () => {
       console.log("Cleaning up all connections.");
@@ -86,7 +88,6 @@ function RoomPage() {
       Object.keys(peerConnectionsRef.current).forEach(cleanupPeerConnection);
       newSocket.disconnect();
       setRemoteParticipants(new Map());
-      participantInfoRef.current.clear();
     };
     
     newSocket.on('connect', () => {
@@ -107,7 +108,7 @@ function RoomPage() {
   useEffect(() => {
     if (!socket) return;
 
-    const createPeerConnection = (peerId: string, stream: MediaStream) => {
+    const createPeerConnection = (peerId: string, peerName: string, stream: MediaStream) => {
       if (peerConnectionsRef.current[peerId]) {
         console.log(`Peer connection for ${peerId} already exists.`);
         return peerConnectionsRef.current[peerId];
@@ -122,7 +123,6 @@ function RoomPage() {
       };
 
       pc.ontrack = (event) => {
-        const peerName = participantInfoRef.current.get(peerId)?.name || 'Someone';
         console.log(`Received remote track from ${peerName} (${peerId})`);
         setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerName, stream: event.streams[0] }));
       };
@@ -141,21 +141,29 @@ function RoomPage() {
     
     const handleExistingUsers = (users: {id: string, name: string}[]) => {
       console.log('Received existing users list:', users);
-      users.forEach(user => {
-        if(user.id !== socket.id) {
-          participantInfoRef.current.set(user.id, { name: user.name });
-        }
-      });
+      setAllParticipants(prev => [...prev, ...users.filter(u => u.id !== socket.id)]);
+      if (isInCall && localStream) {
+        users.forEach(user => {
+          if (user.id !== socket.id) {
+            const pc = createPeerConnection(user.id, user.name, localStream);
+            pc.createOffer()
+              .then(offer => pc.setLocalDescription(offer))
+              .then(() => {
+                socket.emit('offer', { target: user.id, sdp: pc.localDescription, name: localParticipantName });
+              });
+          }
+        });
+      }
     };
 
     const handleUserJoined = async ({ id: peerId, name: peerName }: { id: string; name: string }) => {
       if (peerId === socket.id) return;
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
-      participantInfoRef.current.set(peerId, { name: peerName });
+      setAllParticipants(prev => [...prev, {id: peerId, name: peerName}]);
 
       if (isInCall && localStream) {
         console.log(`I'm in call. User ${peerName} joined. Sending them an offer.`);
-        const pc = createPeerConnection(peerId, localStream);
+        const pc = createPeerConnection(peerId, peerName, localStream);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
@@ -168,8 +176,7 @@ function RoomPage() {
         return;
       }
       console.log(`Received offer from ${data.name} (${data.caller})`);
-      participantInfoRef.current.set(data.caller, { name: data.name });
-      const pc = createPeerConnection(data.caller, localStream);
+      const pc = createPeerConnection(data.caller, data.name, localStream);
       
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
       const answer = await pc.createAnswer();
@@ -197,8 +204,8 @@ function RoomPage() {
     };
 
     const handleUserDisconnected = (peerId: string) => {
-      const leavingParticipantName = participantInfoRef.current.get(peerId)?.name || 'A user';
-      toast({ title: 'User Left', description: `${leavingParticipantName} has left the room.` });
+      const leavingParticipant = allParticipants.find(p => p.id === peerId);
+      toast({ title: 'User Left', description: `${leavingParticipant?.name || 'A user'} has left the room.` });
       
       cleanupPeerConnection(peerId);
       setRemoteParticipants(prev => {
@@ -206,7 +213,7 @@ function RoomPage() {
         newMap.delete(peerId);
         return newMap;
       });
-      participantInfoRef.current.delete(peerId);
+      setAllParticipants(prev => prev.filter(p => p.id !== peerId));
     };
 
     socket.on('existing-users', handleExistingUsers);
@@ -235,7 +242,7 @@ function RoomPage() {
       socket.off('receive-message');
       socket.off('previous-messages');
     };
-  }, [socket, isInCall, localStream, cleanupPeerConnection, toast, localParticipantName]);
+  }, [socket, isInCall, localStream, cleanupPeerConnection, toast, localParticipantName, allParticipants]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -252,30 +259,30 @@ function RoomPage() {
       setLocalStream(stream);
       setIsInCall(true);
 
-      for (const [peerId, peerInfo] of participantInfoRef.current.entries()) {
-        if (peerId === socket.id) continue;
-        console.log(`Initiating call with existing user ${peerInfo.name} (${peerId})`);
-        
-        const pc = new RTCPeerConnection(ICE_SERVERS);
-        peerConnectionsRef.current[peerId] = pc;
-    
-        pc.onicecandidate = (event) => {
-          if (event.candidate && socket) {
-            socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
-          }
-        };
+      const otherUsers = allParticipants.filter(p => p.id !== socket.id);
+      otherUsers.forEach(user => {
+         console.log(`Initiating call with existing user ${user.name} (${user.id})`);
+         const pc = new RTCPeerConnection(ICE_SERVERS);
+         peerConnectionsRef.current[user.id] = pc;
+         stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-        pc.ontrack = (event) => {
-          console.log(`Received remote track from ${peerInfo.name} (${peerId}) on initial connection`);
-          setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerInfo.name, stream: event.streams[0] }));
-        };
+         pc.onicecandidate = (event) => {
+           if (event.candidate) {
+             socket.emit('ice-candidate', { target: user.id, candidate: event.candidate });
+           }
+         };
 
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('offer', { target: peerId, sdp: offer, name: localParticipantName });
-      }
+         pc.ontrack = (event) => {
+           console.log(`Received remote track from ${user.name} (${user.id}) on initial connection`);
+           setRemoteParticipants(prev => new Map(prev).set(user.id, { id: user.id, name: user.name, stream: event.streams[0] }));
+         };
+         
+         pc.createOffer()
+          .then(offer => pc.setLocalDescription(offer))
+          .then(() => {
+             socket.emit('offer', { target: user.id, sdp: pc.localDescription, name: localParticipantName });
+          });
+      });
 
     } catch (err) {
       console.error('Error accessing media devices.', err);
@@ -332,55 +339,62 @@ function RoomPage() {
   };
   
   const remoteParticipantsArray = Array.from(remoteParticipants.values());
-  const totalParticipants = (isInCall ? 1 : 0) + remoteParticipantsArray.length;
+  const videoParticipants = useMemo(() => {
+    const remoteP = Array.from(remoteParticipants.values());
+    const participants = remoteP.map(p => ({ id: p.id, name: p.name, stream: p.stream, isLocal: false, isAudioEnabled: true, isVideoEnabled: true }));
+    if (localStream) {
+        participants.unshift({ id: socket?.id || 'local', name: `${localParticipantName} (You)`, stream: localStream, isLocal: true, isAudioEnabled: isMicEnabled, isVideoEnabled: isVideoEnabled });
+    }
+    return participants;
+  }, [localStream, remoteParticipants, localParticipantName, socket, isMicEnabled, isVideoEnabled]);
   
-  const gridClass = totalParticipants <= 1 ? 'grid-cols-1 grid-rows-1'
-                  : totalParticipants === 2 ? 'grid-cols-1 md:grid-cols-2 grid-rows-2 md:grid-rows-1'
-                  : totalParticipants <= 4 ? 'grid-cols-2 grid-rows-2'
-                  : 'grid-cols-2 lg:grid-cols-3 grid-rows-auto';
+  const gridClass = videoParticipants.length <= 1 ? 'grid-cols-1 grid-rows-1'
+                  : videoParticipants.length === 2 ? 'grid-cols-1 md:grid-cols-2 grid-rows-2 md:grid-rows-1'
+                  : videoParticipants.length <= 4 ? 'grid-cols-2 grid-rows-2'
+                  : 'grid-cols-2 lg:grid-cols-3';
 
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      <RoomHeader roomId={roomId} participantCount={totalParticipants} />
+      <RoomHeader roomId={roomId} videoParticipants={videoParticipants} />
 
       <div className="flex flex-1 overflow-hidden md:flex-row flex-col">
         <main className="flex-1 flex flex-col p-2 md:p-4 overflow-hidden">
           {!isInCall ? (
-            <div className="flex-1 flex flex-col items-center justify-center bg-card/50 rounded-lg shadow-inner p-6 animate-fade-in">
-              <Card className="p-6 md:p-10 text-center shadow-xl max-w-md w-full border-border/50 hover:shadow-2xl transition-shadow duration-300">
+            <div className="flex-1 flex flex-col items-center justify-center bg-card/50 rounded-lg shadow-inner p-4 animate-fade-in">
+              <Card className="p-6 text-center shadow-xl max-w-md w-full border-border/50 hover:shadow-2xl transition-shadow duration-300 rounded-xl">
                 <CardHeader>
-                  <div className="flex justify-center mb-6">
-                    <VideoIcon className="w-20 h-20 text-primary drop-shadow-[0_2px_4px_rgba(var(--primary-rgb),0.5)]" />
+                  <div className="flex justify-center mb-4">
+                    <VideoIcon className="w-16 h-16 text-primary drop-shadow-[0_2px_4px_rgba(var(--primary-rgb),0.5)]" />
                   </div>
-                  <CardTitle className="text-3xl md:text-4xl mb-2 font-headline tracking-tight">Join Voice & Video Call</CardTitle>
-                  <CardDescription className="text-muted-foreground mb-6 text-base">
+                  <CardTitle className="text-2xl md:text-3xl mb-2 font-headline tracking-tight">Join Voice & Video Call</CardTitle>
+                  <CardDescription className="text-muted-foreground text-sm">
                     Connect with others face-to-face and by voice.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   {mediaError ? (
-                    <div className="space-y-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive text-destructive rounded-md text-sm flex items-center gap-2 animate-shake">
-                        <AlertTriangle className="h-5 w-5 shrink-0" />
+                    <div className="space-y-3">
+                      <div className="p-3 bg-destructive/10 border border-destructive text-destructive rounded-md text-xs flex items-center gap-2 animate-shake">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
                         <p>{mediaError}</p>
                       </div>
                       <Button
                         onClick={() => { setMediaError(null); joinCall(); }}
                         size="lg"
                         variant="outline"
-                        className="w-full py-7 text-lg"
+                        className="w-full py-6 text-base"
                       >
-                        <RefreshCw className="mr-2 h-6 w-6" /> Try Again
+                        <RefreshCw className="mr-2 h-5 w-5" /> Try Again
                       </Button>
                     </div>
                   ) : (
                     <Button
                       onClick={joinCall}
                       size="lg"
-                      className="w-full py-7 text-lg bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
+                      className="w-full py-6 text-base bg-gradient-to-r from-primary to-accent hover:shadow-glow-primary-md text-primary-foreground transition-all duration-300 ease-in-out transform hover:scale-105 active:animate-button-press"
                     >
-                      <VideoIcon className="mr-2 h-6 w-6" /> Join Call
+                      <VideoIcon className="mr-2 h-5 w-5" /> Join Call
                     </Button>
                   )}
                 </CardContent>
@@ -388,21 +402,15 @@ function RoomPage() {
             </div>
           ) : (
             <>
-              <div className={`flex-1 grid gap-2 md:gap-4 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in ${gridClass}`}>
-                {localStream && (
-                  <VideoPlayer
-                    stream={localStream}
-                    isLocal
-                    name={`${localParticipantName} (You)`}
-                    isAudioEnabled={isMicEnabled}
-                    isVideoEnabled={isVideoEnabled}
-                  />
-                )}
-                {remoteParticipantsArray.map(participant => (
+              <div className={`flex-1 grid gap-2 md:gap-3 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in ${gridClass}`}>
+                {videoParticipants.map(participant => (
                   <VideoPlayer
                     key={participant.id}
                     stream={participant.stream}
                     name={participant.name}
+                    isLocal={participant.isLocal}
+                    isAudioEnabled={participant.isAudioEnabled}
+                    isVideoEnabled={participant.isVideoEnabled}
                   />
                 ))}
               </div>
@@ -418,11 +426,34 @@ function RoomPage() {
           )}
         </main>
 
-        <aside className="w-full md:w-[360px] lg:w-[420px] border-t md:border-t-0 md:border-l border-border/50 bg-card flex flex-col shadow-lg max-h-full md:max-h-[calc(100vh-var(--header-height,73px))]">
-          <div className="p-4 border-b border-border/50 sticky top-0 bg-card z-10">
-            <h2 className="text-xl font-semibold text-primary tracking-tight">Live Chat</h2>
+        <aside className="w-full md:w-[340px] lg:w-[380px] border-t md:border-t-0 md:border-l border-border/50 bg-card flex flex-col shadow-lg max-h-full md:max-h-[calc(100vh-var(--header-height,65px))]">
+          <div className="p-3 border-b border-border/50 sticky top-0 bg-card z-10 flex justify-between items-center">
+            <h2 className="text-lg font-semibold text-primary tracking-tight">Live Chat</h2>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="flex items-center gap-1.5 text-muted-foreground px-2 h-8">
+                  <Users className="h-4 w-4" />
+                  <span className="font-medium">{allParticipants.length}</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64" side="top" align="end">
+                  <div className="font-semibold text-sm mb-2">Room Members</div>
+                  <ScrollArea className="max-h-48">
+                    <div className="space-y-2 pr-2">
+                        {allParticipants.map(p => (
+                            <div key={p.id} className="flex items-center gap-2 text-sm">
+                                <Avatar className="h-7 w-7 text-xs">
+                                    <AvatarFallback className="bg-muted text-muted-foreground">{p.name.charAt(0).toUpperCase()}</AvatarFallback>
+                                </Avatar>
+                                <span className="truncate">{p.name}{p.id === socket?.id ? ' (You)' : ''}</span>
+                            </div>
+                        ))}
+                    </div>
+                  </ScrollArea>
+              </PopoverContent>
+            </Popover>
           </div>
-          <ScrollArea className="flex-1 p-3 md:p-4">
+          <ScrollArea className="flex-1 p-2 md:p-3">
             <div className="space-y-3">
               {messages.map(msg => (
                 <ChatMessage

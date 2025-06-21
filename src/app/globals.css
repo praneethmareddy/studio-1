@@ -2,37 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
-}
-
 @layer base {
   :root {
-    --background: 210 40% 98%; /* Light - Soft Off-White/Light Blueish Gray */
-    --foreground: 215 25% 25%; /* Light - Dark Desaturated Blue/Slate Gray */
-    --card: 0 0% 100%; /* Light - White */
-    --card-foreground: 215 25% 25%; /* Light - Dark Desaturated Blue */
-    --popover: 0 0% 100%; /* Light - White */
-    --popover-foreground: 215 25% 25%; /* Light - Dark Desaturated Blue */
-    --primary: 250 75% 60%; /* Light - Vibrant Indigo */
-    --primary-foreground: 0 0% 100%; /* Light - White */
-    --secondary: 210 30% 92%; /* Light - Very Light Gray-Blue */
-    --secondary-foreground: 215 20% 45%; /* Light - Medium Gray-Blue */
-    --muted: 210 30% 95%; /* Light - Lighter Gray-Blue for muted backgrounds */
-    --muted-foreground: 215 15% 55%; /* Light - Softer Gray-Blue for muted text */
-    --accent: 340 90% 65%; /* Light - Vibrant Pink/Magenta */
-    --accent-foreground: 0 0% 100%; /* Light - White */
-    --destructive: 0 75% 55%; /* Light - Bright Red */
-    --destructive-foreground: 0 0% 100%; /* Light - White */
-    --border: 210 20% 88%; /* Light - Soft Gray Border */
-    --input: 210 30% 96%; /* Light - Very Light Gray for input backgrounds */
-    --ring: 250 80% 70%; /* Light - Brighter Indigo for rings */
-    --chart-1: 250 70% 60%;
-    --chart-2: 340 80% 65%;
-    --chart-3: 190 70% 50%;
-    --chart-4: 45 80% 60%;
-    --chart-5: 270 70% 65%;
-    --radius: 0.75rem; /* Slightly larger radius for modern feel */
+    /* CommVerse Theme */
+    --background: 0 0% 94%; /* #F0F0F0 - Light Gray */
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 197 77% 53%; /* #29ABE2 - Vibrant Blue */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 120 73% 75%; /* #90EE90 - Light Green */
+    --accent-foreground: 20 14% 4%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 197 77% 53%;
+    
+    --radius: 0.75rem;
     --sidebar-background: 210 30% 96%;
     --sidebar-foreground: 215 25% 30%;
     --sidebar-primary: 250 70% 55%;
@@ -42,31 +43,36 @@ body {
     --sidebar-border: 210 20% 85%;
     --sidebar-ring: 250 75% 65%;
   }
+
   .dark {
-    --background: 220 20% 10%; /* Dark - Very Dark Desaturated Blue */
-    --foreground: 210 30% 90%; /* Dark - Light Gray-Blue */
-    --card: 220 18% 14%; /* Dark - Slightly Lighter Dark Blue */
-    --card-foreground: 210 30% 90%; /* Dark - Light Gray-Blue */
-    --popover: 220 20% 10%; /* Dark - Very Dark Desaturated Blue */
-    --popover-foreground: 210 30% 90%; /* Dark - Light Gray-Blue */
-    --primary: 245 70% 70%; /* Dark - Brighter Indigo */
-    --primary-foreground: 0 0% 100%; /* Dark - White */
-    --secondary: 220 15% 25%; /* Dark - Darker Gray-Blue */
-    --secondary-foreground: 210 25% 75%; /* Dark - Lighter Gray-Blue */
-    --muted: 220 15% 20%; /* Dark - Darker Gray-Blue for muted backgrounds */
-    --muted-foreground: 210 20% 65%; /* Dark - Softer Gray-Blue for muted text */
-    --accent: 335 90% 70%; /* Dark - Brighter Pink/Magenta */
-    --accent-foreground: 0 0% 100%; /* Dark - White */
-    --destructive: 0 70% 60%; /* Dark - Slightly desaturated but still bright Red */
-    --destructive-foreground: 0 0% 100%; /* Dark - White */
-    --border: 220 15% 30%; /* Dark - Darker Gray Border */
-    --input: 220 15% 22%; /* Dark - Dark Gray for input backgrounds */
-    --ring: 245 75% 75%; /* Dark - Even Brighter Indigo for rings */
-    --chart-1: 245 65% 70%;
-    --chart-2: 335 80% 70%;
-    --chart-3: 190 65% 60%;
-    --chart-4: 45 75% 65%;
-    --chart-5: 270 65% 70%;
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 14%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 197 77% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 120 60% 65%;
+    --accent-foreground: 20 14% 4%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 33% 25%;
+    --input: 217 33% 25%;
+    --ring: 197 77% 53%;
+
     --sidebar-background: 220 18% 12%;
     --sidebar-foreground: 210 30% 85%;
     --sidebar-primary: 245 65% 65%;

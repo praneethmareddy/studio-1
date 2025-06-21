@@ -3,13 +3,17 @@
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { Copy, Users } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ScrollArea } from '../ui/scroll-area';
+import { Avatar, AvatarFallback } from '../ui/avatar';
+import type { VideoParticipant } from '@/types';
 
 interface RoomHeaderProps {
   roomId: string;
-  participantCount: number;
+  videoParticipants: VideoParticipant[];
 }
 
-export default function RoomHeader({ roomId, participantCount }: RoomHeaderProps) {
+export default function RoomHeader({ roomId, videoParticipants }: RoomHeaderProps) {
   const { toast } = useToast();
 
   const handleCopyId = async () => {
@@ -33,27 +37,50 @@ export default function RoomHeader({ roomId, participantCount }: RoomHeaderProps
 
   return (
     <header 
-      style={{'--header-height': '73px'} as React.CSSProperties} 
-      className="p-4 border-b border-border/50 bg-card shadow-md sticky top-0 z-20 animate-fade-in"
+      style={{'--header-height': '65px'} as React.CSSProperties} 
+      className="p-3 border-b border-border/50 bg-card shadow-sm sticky top-0 z-20 animate-fade-in"
     >
       <div className="container mx-auto flex justify-between items-center gap-4">
         <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 text-primary">
-          <Users className="h-6 w-6" />
-          <span className="text-xl font-bold">{participantCount}</span>
-        </div>
-          <h1 className="text-2xl md:text-3xl font-headline font-semibold text-primary tracking-tight whitespace-nowrap">
-            Room: <span className="font-bold text-accent">{roomId}</span>
-          </h1>
-          <Button 
-            onClick={handleCopyId} 
-            variant="ghost" 
-            size="icon" 
-            aria-label="Copy Room ID"
-            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200 group h-8 w-8"
-          >
-            <Copy className="h-5 w-5 group-hover:animate-pulse" />
-          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="flex items-center gap-1.5 px-2 h-9">
+                  <Users className="h-5 w-5 text-primary" />
+                  <span className="text-lg font-bold text-foreground">{videoParticipants.length}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64">
+              <div className="font-semibold text-sm mb-2">In Call</div>
+                <ScrollArea className="max-h-48">
+                  <div className="space-y-2 pr-2">
+                    {videoParticipants.length > 0 ? videoParticipants.map(p => (
+                        <div key={p.id} className="flex items-center gap-2 text-sm">
+                            <Avatar className="h-7 w-7 text-xs">
+                                <AvatarFallback className="bg-muted text-muted-foreground">{p.name.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                            <span className="truncate">{p.name}</span>
+                        </div>
+                    )) : (
+                      <p className="text-xs text-muted-foreground">No one else is in the call yet.</p>
+                    )}
+                  </div>
+                </ScrollArea>
+            </PopoverContent>
+          </Popover>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-xl md:text-2xl font-headline font-semibold text-foreground tracking-tight whitespace-nowrap">
+              Room: <span className="font-bold text-primary">{roomId}</span>
+            </h1>
+            <Button 
+              onClick={handleCopyId} 
+              variant="ghost" 
+              size="icon" 
+              aria-label="Copy Room ID"
+              className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200 group h-8 w-8"
+            >
+              <Copy className="h-4 w-4 group-hover:animate-pulse" />
+            </Button>
+          </div>
         </div>
        
       </div>

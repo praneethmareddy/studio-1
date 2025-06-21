@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { User, Mic, MicOff, Video as VideoIconOn, VideoOff as VideoIconOff, WifiOff } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIconOn, VideoOff as VideoIconOff, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface VideoPlayerProps {
@@ -29,13 +29,13 @@ export default function VideoPlayer({
     }
   }, [stream]);
 
-  const hasVideoTrack = stream?.getVideoTracks().some(track => track.readyState === 'live' && track.enabled);
+  const hasVideoTrack = stream?.getVideoTracks().some(track => track.readyState === 'live' && !track.muted);
   const displayVideo = stream && hasVideoTrack && isVideoEnabled;
 
   return (
     <Card className={cn(
-        "overflow-hidden shadow-lg w-full aspect-video flex flex-col rounded-xl border-2", 
-        isLocal ? "border-primary/70 shadow-glow-primary-sm" : "border-border/50",
+        "overflow-hidden shadow-md w-full aspect-video flex flex-col rounded-lg", 
+        isLocal ? "border-2 border-primary/70 shadow-glow-primary-sm" : "border border-border/50",
         !displayVideo && "bg-muted"
       )}
     >
@@ -50,41 +50,43 @@ export default function VideoPlayer({
           />
         ) : (
           <div className="flex flex-col items-center justify-center text-muted-foreground h-full w-full p-4">
-            <User className="w-16 h-16 md:w-20 md:h-20 opacity-50 mb-2" />
-            {stream && !isVideoEnabled && <p className="mt-2 text-sm md:text-base font-medium">Video Off</p>}
-            {stream && isVideoEnabled && !hasVideoTrack && <p className="mt-2 text-sm md:text-base font-medium flex items-center gap-1.5"><WifiOff className="w-4 h-4"/> No Video Signal</p>}
-            {!stream && <p className="mt-2 text-sm md:text-base font-medium flex items-center gap-1.5"><WifiOff className="w-4 h-4"/> No Stream</p>}
+            <Avatar className="w-20 h-20 text-3xl">
+              <AvatarFallback className="bg-background text-muted-foreground">
+                {name.charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            {!stream && <p className="mt-2 text-xs font-medium flex items-center gap-1.5"><WifiOff className="w-3 h-3"/> No Stream</p>}
           </div>
         )}
-        <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1.5 md:gap-2 p-1.5 bg-black/50 backdrop-blur-sm rounded-lg text-xs">
+        <div className="absolute bottom-2 right-2 flex items-center gap-1.5 p-1 bg-black/40 backdrop-blur-sm rounded-md text-xs">
           {isAudioEnabled ? (
-            <Mic className="h-4 w-4 text-green-400" />
+            <Mic className="h-3.5 w-3.5 text-green-400" />
           ) : (
-            <MicOff className="h-4 w-4 text-red-400" />
+            <MicOff className="h-3.5 w-3.5 text-red-400" />
           )}
            {isVideoEnabled && hasVideoTrack ? (
-            <VideoIconOn className="h-4 w-4 text-green-400" />
+            <VideoIconOn className="h-3.5 w-3.5 text-green-400" />
           ) : (
-            <VideoIconOff className="h-4 w-4 text-red-400" />
+            <VideoIconOff className="h-3.5 w-3.5 text-red-400" />
           )}
         </div>
       </CardContent>
       <CardFooter className={cn(
-          "p-2.5 bg-card-foreground/5 border-t",
+          "p-2 bg-card-foreground/5 border-t",
            isLocal ? "border-primary/30" : "border-border/30"
         )}
       >
         <div className="flex items-center gap-2">
-          <Avatar className="h-7 w-7">
+          <Avatar className="h-6 w-6">
             <AvatarFallback className={cn(
-                "text-xs font-semibold", 
+                "text-[10px] font-semibold", 
                 isLocal ? "bg-gradient-to-br from-primary to-accent text-primary-foreground" : "bg-secondary text-secondary-foreground"
               )}
             >
-              {name.substring(0, 2).toUpperCase()}
+              {name.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          <span className="text-sm font-medium truncate text-card-foreground">{name}</span>
+          <span className="text-xs font-medium truncate text-card-foreground">{name}</span>
         </div>
       </CardFooter>
     </Card>

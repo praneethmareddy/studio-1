@@ -16,4 +16,11 @@ export interface RemoteParticipant {
   stream: MediaStream;
 }
 
-    
+export interface VideoParticipant {
+    id: string;
+    name: string;
+    stream: MediaStream | null;
+    isLocal: boolean;
+    isAudioEnabled: boolean;
+    isVideoEnabled: boolean;
+}
