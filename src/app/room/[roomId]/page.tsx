@@ -83,6 +83,7 @@ function RoomPage() {
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const micAudioTrackRef = useRef<MediaStreamTrack | null>(null);
   const { toast } = useToast();
   const localParticipantNameRef = useRef(localParticipantName);
   localParticipantNameRef.current = localParticipantName;
@@ -179,34 +180,46 @@ function RoomPage() {
 
 
   const stopScreenShare = useCallback(() => {
-    // This function contains the cleanup logic
-    if (!cameraVideoTrackRef.current || !localStreamRef.current) return;
+    if (!cameraVideoTrackRef.current || !micAudioTrackRef.current || !localStreamRef.current) return;
   
-    const screenTrack = localStreamRef.current.getVideoTracks().find(track => track.getSettings().displaySurface);
-    if (!screenTrack) return;
-  
-    // Restore the camera track on all peer connections
+    // Find screen tracks in the local stream
+    const screenVideoTrack = localStreamRef.current.getVideoTracks().find(track => track.getSettings().displaySurface);
+    const screenAudioTrack = localStreamRef.current.getAudioTracks().find(track => track.id !== micAudioTrackRef.current!.id);
+
+    // Restore original tracks on all peer connections
     peerConnectionsRef.current.forEach(pc => {
-      const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-      if (sender) sender.replaceTrack(cameraVideoTrackRef.current);
+      const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+      if (videoSender) videoSender.replaceTrack(cameraVideoTrackRef.current);
+      
+      const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
+      if (audioSender) audioSender.replaceTrack(micAudioTrackRef.current);
     });
     
-    // Update the local stream
-    localStreamRef.current.removeTrack(screenTrack);
+    // Update local stream object and stop the screen tracks
+    if (screenVideoTrack) {
+        localStreamRef.current.removeTrack(screenVideoTrack);
+        screenVideoTrack.stop();
+    }
+    if (screenAudioTrack) {
+        localStreamRef.current.removeTrack(screenAudioTrack);
+        screenAudioTrack.stop();
+    }
+  
     localStreamRef.current.addTrack(cameraVideoTrackRef.current);
-    screenTrack.stop();
+    localStreamRef.current.addTrack(micAudioTrackRef.current);
   
     setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
     setIsScreenSharing(false);
   
-    // Only unpin if we were the pinned user
     if (pinnedUserId === socket?.id) {
       setPinnedUserId(null);
     }
   
-    // Notify others that we've stopped sharing
     socket?.emit('screen-share-stopped', { roomId });
-    cameraVideoTrackRef.current = null; // Reset ref
+    
+    // Reset refs
+    cameraVideoTrackRef.current = null;
+    micAudioTrackRef.current = null;
   }, [socket, roomId, pinnedUserId]);
 
 
@@ -370,8 +383,7 @@ function RoomPage() {
     };
 
     const handleForceStopScreenShare = () => {
-      // isScreenSharing is state, need to check ref to see if we are sharing
-      if (localStreamRef.current?.getVideoTracks().some(t => t.getSettings().displaySurface)) {
+      if (isScreenSharing) {
         stopScreenShare();
         toast({
           title: "Screen Share Stopped",
@@ -502,31 +514,47 @@ function RoomPage() {
           stopScreenShare();
       } else {
           try {
-              const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-              const screenTrack = screenStream.getVideoTracks()[0];
+              const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+              
+              const screenVideoTrack = screenStream.getVideoTracks()[0];
+              const screenAudioTrack = screenStream.getAudioTracks()[0];
 
               if (!localStreamRef.current) return;
 
-              const cameraTrack = cameraVideoTrackRef.current || localStreamRef.current.getVideoTracks().find(t => t.kind === 'video' && !t.getSettings().displaySurface);
-              if (!cameraTrack) {
-                  toast({ title: "Camera required", description: "Please enable your camera to start screen sharing.", variant: "destructive" });
+              const cameraTrack = localStreamRef.current.getVideoTracks()[0];
+              const micTrack = localStreamRef.current.getAudioTracks()[0];
+
+              if (!cameraTrack || !micTrack) {
+                  toast({ title: "Media Error", description: "Camera and microphone must be enabled to share screen.", variant: "destructive" });
+                  screenStream.getTracks().forEach(track => track.stop());
                   return;
               }
               cameraVideoTrackRef.current = cameraTrack;
-
+              micAudioTrackRef.current = micTrack;
+              
               peerConnectionsRef.current.forEach(pc => {
-                  const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                  if (sender) sender.replaceTrack(screenTrack);
+                  const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+                  if (videoSender) videoSender.replaceTrack(screenVideoTrack);
+                  
+                  if (screenAudioTrack) {
+                      const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
+                      if (audioSender) audioSender.replaceTrack(screenAudioTrack);
+                  }
               });
 
-              localStreamRef.current.removeTrack(cameraTrack);
-              localStreamRef.current.addTrack(screenTrack);
+              localStreamRef.current.removeTrack(cameraVideoTrackRef.current);
+              localStreamRef.current.addTrack(screenVideoTrack);
+              if (screenAudioTrack) {
+                  localStreamRef.current.removeTrack(micAudioTrackRef.current);
+                  localStreamRef.current.addTrack(screenAudioTrack);
+              }
+              
               setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
               setIsScreenSharing(true);
               setPinnedUserId(socket?.id || null);
               socket?.emit('screen-share-started', { roomId });
               
-              screenTrack.onended = () => {
+              screenVideoTrack.onended = () => {
                   stopScreenShare();
               };
 
@@ -732,6 +760,7 @@ function RoomPage() {
                 onToggleScreenShare={toggleScreenShare}
                 onSendReaction={handleSendReaction}
                 className="mt-auto mx-auto"
+                isMobile={isMobile}
               />
             </div>
           )}
