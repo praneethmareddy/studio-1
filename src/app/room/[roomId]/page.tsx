@@ -446,68 +446,80 @@ function RoomPage() {
       socket?.emit('video-state-changed', { roomId, isVideoEnabled: newVideoState });
     }
   };
+  
+  const isSomeoneElseSharing = Array.from(remoteParticipants.values()).some(p => p.isScreenSharing);
 
-    const toggleScreenShare = async () => {
-        if (isScreenSharing) {
-            const screenTrack = localStreamRef.current?.getVideoTracks().find(t => t.getSettings().displaySurface);
-            if(screenTrack) {
-                screenTrack.stop();
-            }
-        } else {
-            try {
-                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-                const screenTrack = screenStream.getVideoTracks()[0];
+  const toggleScreenShare = async () => {
+      if (isScreenSharing) {
+          const screenTrack = localStreamRef.current?.getVideoTracks().find(t => t.getSettings().displaySurface);
+          if(screenTrack) {
+              screenTrack.stop();
+          }
+      } else {
+          if (isSomeoneElseSharing) {
+              toast({
+                  title: "Action Not Allowed",
+                  description: "Another participant is already sharing their screen.",
+                  variant: "destructive",
+                  duration: 3000,
+              });
+              return;
+          }
 
-                if (!localStreamRef.current) return;
+          try {
+              const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+              const screenTrack = screenStream.getVideoTracks()[0];
 
-                const cameraTrack = cameraVideoTrackRef.current || localStreamRef.current.getVideoTracks().find(t => t.kind === 'video' && !t.getSettings().displaySurface);
-                if (!cameraTrack) {
-                    toast({ title: "Camera required", description: "Please enable your camera to start screen sharing.", variant: "destructive" });
-                    return;
-                }
-                cameraVideoTrackRef.current = cameraTrack;
+              if (!localStreamRef.current) return;
 
-                peerConnectionsRef.current.forEach(pc => {
-                    const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                    if (sender) sender.replaceTrack(screenTrack);
-                });
+              const cameraTrack = cameraVideoTrackRef.current || localStreamRef.current.getVideoTracks().find(t => t.kind === 'video' && !t.getSettings().displaySurface);
+              if (!cameraTrack) {
+                  toast({ title: "Camera required", description: "Please enable your camera to start screen sharing.", variant: "destructive" });
+                  return;
+              }
+              cameraVideoTrackRef.current = cameraTrack;
 
-                localStreamRef.current.removeTrack(cameraTrack);
-                localStreamRef.current.addTrack(screenTrack);
-                setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-                setIsScreenSharing(true);
-                setPinnedUserId(socket?.id || null);
-                socket?.emit('screen-share-started', { roomId });
-                
-                screenTrack.onended = () => {
-                    if (cameraVideoTrackRef.current && localStreamRef.current) {
-                        const currentScreenTrack = localStreamRef.current.getVideoTracks()[0];
-                        peerConnectionsRef.current.forEach(pc => {
-                            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                            if (sender) sender.replaceTrack(cameraVideoTrackRef.current);
-                        });
-                        
-                        localStreamRef.current.removeTrack(currentScreenTrack);
-                        localStreamRef.current.addTrack(cameraVideoTrackRef.current);
-                        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-                        setIsScreenSharing(false);
-                        setPinnedUserId(null);
-                        socket?.emit('screen-share-stopped', { roomId });
-                    }
-                };
+              peerConnectionsRef.current.forEach(pc => {
+                  const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+                  if (sender) sender.replaceTrack(screenTrack);
+              });
 
-            } catch (err) {
-                console.error("Error accessing screen media.", err);
-                if (err instanceof Error && err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
-                    toast({
-                        title: 'Screen Share Error',
-                        description: 'Could not access your screen. Please try again.',
-                        variant: 'destructive',
-                    });
-                }
-            }
-        }
-    };
+              localStreamRef.current.removeTrack(cameraTrack);
+              localStreamRef.current.addTrack(screenTrack);
+              setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+              setIsScreenSharing(true);
+              setPinnedUserId(socket?.id || null);
+              socket?.emit('screen-share-started', { roomId });
+              
+              screenTrack.onended = () => {
+                  if (cameraVideoTrackRef.current && localStreamRef.current) {
+                      const currentScreenTrack = localStreamRef.current.getVideoTracks()[0];
+                      peerConnectionsRef.current.forEach(pc => {
+                          const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+                          if (sender) sender.replaceTrack(cameraVideoTrackRef.current);
+                      });
+                      
+                      localStreamRef.current.removeTrack(currentScreenTrack);
+                      localStreamRef.current.addTrack(cameraVideoTrackRef.current);
+                      setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+                      setIsScreenSharing(false);
+                      setPinnedUserId(null);
+                      socket?.emit('screen-share-stopped', { roomId });
+                  }
+              };
+
+          } catch (err) {
+              console.error("Error accessing screen media.", err);
+              if (err instanceof Error && err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+                  toast({
+                      title: 'Screen Share Error',
+                      description: 'Could not access your screen. Please try again.',
+                      variant: 'destructive',
+                  });
+              }
+          }
+      }
+  };
 
 
   const handleSendMessage = (text: string) => {
@@ -649,19 +661,20 @@ function RoomPage() {
                 </div>
               ) : (
                 // Grid Layout
-                <div className={`flex-1 grid gap-2 overflow-y-auto p-1 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`}>
+                <div className={`flex-1 grid gap-2 overflow-y-auto p-1 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4`}>
                     {videoParticipants.map(participant => (
-                    <VideoPlayer
-                        key={participant.id}
-                        stream={participant.stream}
-                        name={participant.name}
-                        isLocal={(participant as any).isLocal}
-                        isAudioEnabled={participant.isAudioEnabled}
-                        isVideoEnabled={participant.isVideoEnabled}
-                        reactions={reactions.filter(r => r.userId === participant.id)}
-                        onPin={() => setPinnedUserId(participant.id)}
-                        isScreenSharing={participant.isScreenSharing}
-                    />
+                      <div key={participant.id} className="aspect-video min-w-0">
+                        <VideoPlayer
+                            stream={participant.stream}
+                            name={participant.name}
+                            isLocal={(participant as any).isLocal}
+                            isAudioEnabled={participant.isAudioEnabled}
+                            isVideoEnabled={participant.isVideoEnabled}
+                            reactions={reactions.filter(r => r.userId === participant.id)}
+                            onPin={() => setPinnedUserId(participant.id)}
+                            isScreenSharing={participant.isScreenSharing}
+                        />
+                      </div>
                     ))}
                 </div>
               )}
@@ -674,6 +687,7 @@ function RoomPage() {
                 onToggleVideo={toggleVideo}
                 onToggleScreenShare={toggleScreenShare}
                 onSendReaction={handleSendReaction}
+                isSomeoneElseSharing={isSomeoneElseSharing}
                 className="mt-auto mx-auto"
               />
             </div>
