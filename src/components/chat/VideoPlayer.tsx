@@ -3,7 +3,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Mic, MicOff, VideoOff as VideoIconOff, Pin, PinOff } from 'lucide-react';
+import { Mic, MicOff, VideoOff as VideoIconOff, Pin, PinOff, Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Reaction } from '@/types';
 
@@ -31,7 +31,9 @@ export default function VideoPlayer({
   reactions
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<HTMLDivElement>(null);
   const [localReactions, setLocalReactions] = useState<Reaction[]>([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -49,11 +51,39 @@ export default function VideoPlayer({
       }
   }, [reactions]);
 
+  const handleToggleFullscreen = () => {
+    if (!playerRef.current) return;
+
+    if (!document.fullscreenElement) {
+      playerRef.current.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, []);
+
   const hasVideoTrack = stream?.getVideoTracks().some(track => track.readyState === 'live');
   const displayVideo = stream && hasVideoTrack && isVideoEnabled;
 
   return (
-    <div className={cn(
+    <div 
+      ref={playerRef}
+      className={cn(
         "group overflow-hidden shadow-lg w-full h-full flex flex-col rounded-lg relative", 
         isPinned ? "border-2 border-primary/70" : "border border-border/50",
         "bg-muted"
@@ -97,15 +127,28 @@ export default function VideoPlayer({
           )}
       </div>
 
-      {!isLocal && (
-        <button
-            onClick={onPin}
-            className="absolute top-2 left-2 p-1.5 bg-black/40 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
-            aria-label={isPinned ? "Unpin participant" : "Pin participant"}
-        >
-            {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-        </button>
-      )}
+      <div className="absolute top-2 left-2 flex items-center gap-2 z-10">
+        {!isLocal && (
+          <button
+              onClick={onPin}
+              className="p-1.5 bg-black/40 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+              aria-label={isPinned ? "Unpin participant" : "Pin participant"}
+          >
+              {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+          </button>
+        )}
+        
+        {isScreenSharing && (
+          <button
+              onClick={handleToggleFullscreen}
+              className="p-1.5 bg-black/40 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+              aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
+          >
+              {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+          </button>
+        )}
+      </div>
+
 
       <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
         {localReactions.map(reaction => (
