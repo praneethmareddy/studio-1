@@ -571,18 +571,21 @@ function RoomPage() {
   
   const getGridLayoutClassName = (count: number) => {
     if (count <= 1) {
-      return 'max-w-4xl mx-auto grid-cols-1';
+      return 'grid-cols-1 max-w-4xl mx-auto';
     }
     if (count === 2) {
-      return 'grid-cols-1 sm:grid-cols-2';
+      return 'grid-cols-1 md:grid-cols-2';
     }
     if (count <= 4) {
       return 'grid-cols-2';
     }
-    if (count <= 9) {
+    if (count <= 6) {
       return 'grid-cols-2 md:grid-cols-3';
     }
-    return 'grid-cols-3 lg:grid-cols-4';
+    if (count <= 9) {
+      return 'grid-cols-3';
+    }
+    return 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4';
   };
 
   const pinnedParticipant = videoParticipants.find(p => p.id === pinnedUserId);

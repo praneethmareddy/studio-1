@@ -84,9 +84,12 @@ export default function VideoPlayer({
     <div 
       ref={playerRef}
       className={cn(
-        "group overflow-hidden shadow-lg w-full h-full flex flex-col rounded-lg relative", 
-        isPinned ? "border-2 border-primary/70" : "border border-border/50",
-        "bg-muted"
+        "group overflow-hidden shadow-lg w-full h-full flex flex-col rounded-lg relative bg-muted transition-all duration-300",
+        isScreenSharing
+          ? "border-2 border-accent shadow-glow-accent-sm"
+          : isPinned
+          ? "border-2 border-primary/70"
+          : "border border-border/50"
       )}
     >
       <video
@@ -114,7 +117,7 @@ export default function VideoPlayer({
           </div>
         </div>
       ) : (
-        <div className="absolute bottom-2 left-2 flex items-center gap-2 p-1.5 px-3 bg-black/50 backdrop-blur-sm rounded-lg text-xs text-white">
+        <div className="absolute bottom-2 left-2 right-2 flex items-center gap-2 p-1.5 px-3 bg-black/50 backdrop-blur-sm rounded-lg text-xs text-white">
             <span className="font-medium truncate">{name}</span>
         </div>
       )}
@@ -138,7 +141,7 @@ export default function VideoPlayer({
           </button>
         )}
         
-        {isScreenSharing && (
+        {displayVideo && isScreenSharing && (
           <button
               onClick={handleToggleFullscreen}
               className="p-1.5 bg-black/40 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
