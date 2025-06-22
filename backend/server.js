@@ -1,3 +1,4 @@
+
 // server.js
 
 require("dotenv").config();
@@ -152,11 +153,32 @@ io.on("connection", (socket) => {
   });
 
   socket.on("screen-share-started", ({ roomId }) => {
-    if (rooms[roomId]?.[socket.id]) {
-        rooms[roomId][socket.id].isScreenSharing = true;
+    if (!rooms[roomId] || !rooms[roomId][socket.id]) return;
+
+    // Check if another user is already sharing their screen
+    let currentSharerId = null;
+    for (const id in rooms[roomId]) {
+        if (rooms[roomId][id].isScreenSharing && id !== socket.id) {
+            currentSharerId = id;
+            break;
+        }
     }
+
+    if (currentSharerId) {
+        // Force the current sharer to stop
+        io.to(currentSharerId).emit("force-stop-screen-share");
+        rooms[roomId][currentSharerId].isScreenSharing = false;
+        // Let others know the old share has stopped
+        io.to(roomId).emit("user-screen-share-stopped", { userId: currentSharerId });
+        console.log(`✅ Forcing ${rooms[roomId][currentSharerId].name} (${currentSharerId}) to stop screen sharing.`);
+    }
+
+    // Start the new screen share
+    rooms[roomId][socket.id].isScreenSharing = true;
     socket.to(roomId).emit("user-screen-share-started", { userId: socket.id });
+    console.log(`✅ ${rooms[roomId][socket.id].name} (${socket.id}) started screen sharing in room: ${roomId}`);
   });
+
 
   socket.on("screen-share-stopped", ({ roomId }) => {
       if (rooms[roomId]?.[socket.id]) {

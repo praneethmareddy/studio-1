@@ -18,7 +18,6 @@ interface CallControlsProps {
   onLeaveCall: () => void;
   onSendReaction: (emoji: string) => void;
   className?: string;
-  isSomeoneElseSharing?: boolean;
 }
 
 const EMOJI_REACTIONS = ['👍', '❤️', '🎉', '😂', '😮', '👏'];
@@ -33,12 +32,9 @@ export default function CallControls({
   onLeaveCall,
   onSendReaction,
   className,
-  isSomeoneElseSharing = false
 }: CallControlsProps) {
   const controlButtonBaseClass = "transition-all duration-200 ease-in-out transform hover:scale-110 rounded-full w-14 h-14 md:w-16 md:h-16 p-0 text-lg shadow-lg active:animate-button-press disabled:transform-none disabled:cursor-not-allowed";
   
-  const isScreenShareDisabled = !isScreenSharing && isSomeoneElseSharing;
-
   return (
     <TooltipProvider>
       <div className={cn(
@@ -78,7 +74,6 @@ export default function CallControls({
                         onClick={onToggleScreenShare}
                         variant={isScreenSharing ? "secondary" : "outline"}
                         aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
-                        disabled={isScreenShareDisabled}
                         className={cn(
                             controlButtonBaseClass,
                             isScreenSharing ? "bg-blue-600 hover:bg-blue-700 text-white" : "border-primary/50 hover:bg-primary/10 text-primary",
@@ -89,11 +84,6 @@ export default function CallControls({
                     </Button>
                 </div>
             </TooltipTrigger>
-            {isScreenShareDisabled && (
-                <TooltipContent>
-                    <p>Another participant is already sharing.</p>
-                </TooltipContent>
-            )}
         </Tooltip>
 
         <Popover>
