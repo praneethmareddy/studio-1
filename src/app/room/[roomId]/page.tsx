@@ -19,7 +19,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Video as VideoIcon, AlertTriangle, Loader2, RefreshCw, Users } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-const SIGNALING_SERVER_URL = 'http://localhost:5000';
+const SIGNALING_SERVER_URL = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:5000';
 
 const ICE_SERVERS = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
