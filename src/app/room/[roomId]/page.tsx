@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState, useRef, useCallback, Suspense, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
@@ -47,16 +47,18 @@ function RoomPage() {
   const [localParticipantName] = useState(searchParams.get('name') || 'Anonymous');
   const [messages, setMessages] = useState<Message[]>([]);
   const [socket, setSocket] = useState<Socket | null>(null);
+  
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<Map<string, RemoteParticipant>>(new Map());
   const [allParticipants, setAllParticipants] = useState<Map<string, { name: string }>>(new Map());
-
+  
   const [isInCall, setIsInCall] = useState(false);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const localStreamRef = useRef<MediaStream | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const localParticipantNameRef = useRef(localParticipantName);
@@ -69,8 +71,14 @@ function RoomPage() {
       pc.close();
       peerConnectionsRef.current.delete(peerId);
     }
+    setRemoteParticipants(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(peerId);
+        return newMap;
+    });
   }, []);
 
+  // Effect for initializing and cleaning up socket connection
   useEffect(() => {
     if (localParticipantName === 'Anonymous') {
       toast({
@@ -87,35 +95,36 @@ function RoomPage() {
     
     setAllParticipants(new Map([[newSocket.id, { name: localParticipantName }]]));
 
-    const cleanup = () => {
-      console.log("Cleaning up all connections.");
-      localStream?.getTracks().forEach(track => track.stop());
-      peerConnectionsRef.current.forEach((_, peerId) => cleanupPeerConnection(peerId));
-      newSocket.disconnect();
-      setRemoteParticipants(new Map());
-      setAllParticipants(new Map());
-    };
-    
     newSocket.on('connect', () => {
-      setAllParticipants(new Map([[newSocket.id, { name: localParticipantName }]]));
+      console.log('Socket connected:', newSocket.id);
+      setAllParticipants(prev => new Map(prev).set(newSocket.id, { name: localParticipantNameRef.current }));
       newSocket.emit('join-room', { roomId, name: localParticipantNameRef.current });
     });
 
+    const cleanup = () => {
+      console.log("Cleaning up all connections.");
+      localStreamRef.current?.getTracks().forEach(track => track.stop());
+      peerConnectionsRef.current.forEach((_, peerId) => cleanupPeerConnection(peerId));
+      newSocket.disconnect();
+    };
+    
     window.addEventListener('beforeunload', cleanup);
 
     return () => {
       window.removeEventListener('beforeunload', cleanup);
       cleanup();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [roomId, localParticipantName, router, toast, cleanupPeerConnection]);
 
+
+  // Effect for handling socket events
   useEffect(() => {
     if (!socket) return;
-
+    
     const createPeerConnection = (peerId: string, peerName: string): RTCPeerConnection => {
+      // If a PC already exists, close it before creating a new one.
       if (peerConnectionsRef.current.has(peerId)) {
-        return peerConnectionsRef.current.get(peerId)!;
+        cleanupPeerConnection(peerId);
       }
       
       const pc = new RTCPeerConnection(ICE_SERVERS);
@@ -128,29 +137,35 @@ function RoomPage() {
 
       pc.ontrack = (event) => {
         console.log(`Received remote track from ${peerName} (${peerId})`);
-        setRemoteParticipants(prev => new Map(prev).set(peerId, { 
-          id: peerId, 
-          name: peerName, 
-          stream: event.streams[0],
-          isAudioEnabled: true,
-          isVideoEnabled: true,
-        }));
+        setRemoteParticipants(prev => {
+            const existingParticipant = prev.get(peerId);
+            return new Map(prev).set(peerId, { 
+                id: peerId, 
+                name: peerName, 
+                stream: event.streams[0],
+                isAudioEnabled: existingParticipant?.isAudioEnabled ?? true,
+                isVideoEnabled: existingParticipant?.isVideoEnabled ?? true,
+            });
+        });
       };
       
-      pc.onnegotiationneeded = async () => {
-        try {
-          if (pc.signalingState === 'stable') {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('offer', { target: peerId, sdp: pc.localDescription, name: localParticipantNameRef.current });
-          }
-        } catch (err) {
-          console.error('Error during negotiationneeded event:', err);
-        }
-      };
+      localStreamRef.current?.getTracks().forEach(track => {
+        pc.addTrack(track, localStreamRef.current!);
+      });
 
       peerConnectionsRef.current.set(peerId, pc);
       return pc;
+    };
+    
+    const callUser = async (peerId: string, peerName: string) => {
+      const pc = createPeerConnection(peerId, peerName);
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('offer', { target: peerId, sdp: pc.localDescription, name: localParticipantNameRef.current });
+      } catch (e) {
+        console.error(`Error creating offer for ${peerId}:`, e);
+      }
     };
     
     const handleExistingUsers = (users: {id: string, name: string}[]) => {
@@ -159,10 +174,6 @@ function RoomPage() {
       users.forEach(user => {
         if (user.id !== socket.id) {
           newParticipants.set(user.id, { name: user.name });
-          const pc = createPeerConnection(user.id, user.name);
-          if (localStream) {
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-          }
         }
       });
       setAllParticipants(prev => new Map([...prev, ...newParticipants]));
@@ -171,38 +182,49 @@ function RoomPage() {
     const handleUserJoined = ({ id: peerId, name: peerName }: { id: string; name: string }) => {
       if (peerId === socket.id) return;
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
-      
       setAllParticipants(prev => new Map(prev).set(peerId, { name: peerName }));
       
-      const pc = createPeerConnection(peerId, peerName);
-      if (localStream) {
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      // If we are already in a call, we should initiate a connection to the new user.
+      if (localStreamRef.current) {
+        console.log(`Already in call, initiating call to new user ${peerName}`);
+        callUser(peerId, peerName);
       }
     };
 
-    const handleReceiveOffer = async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-      if (!localStream) {
+    const handleReceiveOffer = async ({ caller, sdp, name: callerName }: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
+      if (!localStreamRef.current) {
+        console.warn('Offer received, but local stream is not ready. Ignoring offer.');
         return;
       }
-      const pc = createPeerConnection(data.caller, data.name);
-      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit('answer', { target: data.caller, sdp: answer, name: localParticipantNameRef.current });
-    };
-
-    const handleReceiveAnswer = async (data: { answerer: string, sdp: RTCSessionDescriptionInit }) => {
-      const pc = peerConnectionsRef.current.get(data.answerer);
-      if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      console.log(`Received offer from ${callerName}`);
+      const pc = createPeerConnection(caller, callerName);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('answer', { target: caller, sdp: pc.localDescription, name: localParticipantNameRef.current });
+      } catch (e) {
+        console.error(`Error handling offer from ${caller}:`, e);
       }
     };
 
-    const handleReceiveCandidate = async (data: { from: string, candidate: RTCIceCandidateInit }) => {
-      const pc = peerConnectionsRef.current.get(data.from);
+    const handleReceiveAnswer = async ({ answerer, sdp }: { answerer: string, sdp: RTCSessionDescriptionInit }) => {
+      console.log(`Received answer from ${answerer}`);
+      const pc = peerConnectionsRef.current.get(answerer);
+      if (pc) {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        } catch (e) {
+          console.error(`Error setting remote description for answer from ${answerer}:`, e);
+        }
+      }
+    };
+
+    const handleReceiveCandidate = async ({ from, candidate }: { from: string, candidate: RTCIceCandidateInit }) => {
+      const pc = peerConnectionsRef.current.get(from);
       if (pc && pc.remoteDescription) {
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
           console.error("Error adding received ICE candidate", error);
         }
@@ -214,13 +236,7 @@ function RoomPage() {
       if (participant) {
         toast({ title: 'User Left', description: `${participant.name} has left the room.` });
       }
-      
       cleanupPeerConnection(peerId);
-      setRemoteParticipants(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(peerId);
-        return newMap;
-      });
       setAllParticipants(prev => {
         const newMap = new Map(prev);
         newMap.delete(peerId);
@@ -228,13 +244,9 @@ function RoomPage() {
       });
     };
 
-    const handleReceiveMessage = (newMessage: Message) => {
-      setMessages(prev => [...prev, newMessage]);
-    }
-    const handlePreviousMessages = (history: Message[]) => {
-       setMessages(history);
-    }
-
+    const handleReceiveMessage = (newMessage: Message) => setMessages(prev => [...prev, newMessage]);
+    const handlePreviousMessages = (history: Message[]) => setMessages(history);
+    
     const handleVideoStateChange = ({ userId, isVideoEnabled }: { userId: string, isVideoEnabled: boolean }) => {
       setRemoteParticipants(prev => {
           const newMap = new Map(prev);
@@ -277,28 +289,41 @@ function RoomPage() {
       socket.off('user-disconnected');
       socket.off('receive-message');
       socket.off('previous-messages');
-      socket.off('user-video-state-changed', handleVideoStateChange);
-      socket.off('user-audio-state-changed', handleAudioStateChange);
+      socket.off('user-video-state-changed');
+      socket.off('user-audio-state-changed');
     };
-  }, [socket, localStream, cleanupPeerConnection, toast]);
+  }, [socket, cleanupPeerConnection, toast]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
+  
   const joinCall = async () => {
     setMediaError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStreamRef.current = stream;
       setLocalStream(stream);
       setIsInCall(true);
-
-      peerConnectionsRef.current.forEach(pc => {
-        stream.getTracks().forEach(track => {
-          pc.addTrack(track, stream);
-        });
+      
+      // Proactively call all existing users
+      allParticipants.forEach((participant, peerId) => {
+        if (peerId !== socket?.id) {
+          console.log(`Joining call, initiating call to existing user ${participant.name}`);
+          const pc = createPeerConnection(peerId, participant.name);
+          const callUser = async () => {
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              socket?.emit('offer', { target: peerId, sdp: pc.localDescription, name: localParticipantNameRef.current });
+            } catch (e) {
+                console.error(`Error creating offer for ${peerId} in joinCall:`, e);
+            }
+          }
+          callUser();
+        }
       });
-
+      
     } catch (err) {
       console.error('Error accessing media devices.', err);
       let errorMessage = 'Could not access camera/microphone.';
@@ -310,21 +335,58 @@ function RoomPage() {
     }
   };
 
+  const createPeerConnection = (peerId: string, peerName: string): RTCPeerConnection => {
+      if (peerConnectionsRef.current.has(peerId)) {
+        console.log(`PC for ${peerName} already exists. Using existing one.`);
+        return peerConnectionsRef.current.get(peerId)!;
+      }
+      console.log(`Creating new PC for ${peerName}`);
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate && socket) {
+          socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+        }
+      };
+
+      pc.ontrack = (event) => {
+        console.log(`Received remote track from ${peerName} (${peerId})`);
+        setRemoteParticipants(prev => {
+            const existingParticipant = prev.get(peerId);
+            return new Map(prev).set(peerId, { 
+                id: peerId, 
+                name: peerName, 
+                stream: event.streams[0],
+                isAudioEnabled: existingParticipant?.isAudioEnabled ?? true,
+                isVideoEnabled: existingParticipant?.isVideoEnabled ?? true,
+            });
+        });
+      };
+      
+      if(localStreamRef.current){
+        localStreamRef.current.getTracks().forEach(track => {
+          pc.addTrack(track, localStreamRef.current!);
+        });
+      }
+
+      peerConnectionsRef.current.set(peerId, pc);
+      return pc;
+  };
+
   const leaveCall = useCallback(() => {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
     }
+    localStreamRef.current = null;
     setLocalStream(null);
     setIsInCall(false);
     
-    peerConnectionsRef.current.forEach(pc => {
-      pc.getSenders().forEach(sender => {
-        pc.removeTrack(sender);
-      });
+    peerConnectionsRef.current.forEach((pc, peerId) => {
+      cleanupPeerConnection(peerId);
     });
-    
-    socket?.emit('leave-call', { roomId });
-  }, [localStream, socket, roomId]);
+
+    setRemoteParticipants(new Map());
+  }, [cleanupPeerConnection]);
 
   const toggleMic = () => {
     if (localStream) {
@@ -360,23 +422,17 @@ function RoomPage() {
     setMessages(prev => [...prev, myMessage]);
   };
   
-  const videoParticipants = useMemo(() => {
-    const remoteP = Array.from(remoteParticipants.values());
-    const participants = remoteP.map(p => ({
-        id: p.id,
-        name: p.name,
-        stream: p.stream,
-        isLocal: false,
-        isAudioEnabled: p.isAudioEnabled,
-        isVideoEnabled: p.isVideoEnabled,
-    }));
-    if (localStream && isInCall) {
-        participants.unshift({ id: socket?.id || 'local', name: `${localParticipantName} (You)`, stream: localStream, isLocal: true, isAudioEnabled: isMicEnabled, isVideoEnabled: isVideoEnabled });
-    }
-    return participants;
-  }, [localStream, remoteParticipants, localParticipantName, socket, isMicEnabled, isVideoEnabled, isInCall]);
-  
-  const allParticipantsArray = useMemo(() => Array.from(allParticipants.entries()).map(([id, data]) => ({ id, ...data })), [allParticipants]);
+  const videoParticipants = Array.from(remoteParticipants.values());
+  if (localStream && isInCall) {
+    videoParticipants.unshift({
+        id: socket?.id || 'local',
+        name: `${localParticipantName} (You)`,
+        stream: localStream,
+        isLocal: true,
+        isAudioEnabled: isMicEnabled,
+        isVideoEnabled: isVideoEnabled,
+    } as any);
+  }
   
   const gridClass = videoParticipants.length <= 1 ? 'grid-cols-1 grid-rows-1'
                   : videoParticipants.length === 2 ? 'grid-cols-1 md:grid-cols-2 grid-rows-2 md:grid-rows-1'
@@ -437,7 +493,7 @@ function RoomPage() {
                     key={participant.id}
                     stream={participant.stream}
                     name={participant.name}
-                    isLocal={participant.isLocal}
+                    isLocal={participant.id === socket?.id || (participant as any).isLocal}
                     isAudioEnabled={participant.isAudioEnabled}
                     isVideoEnabled={participant.isVideoEnabled}
                   />
@@ -462,19 +518,19 @@ function RoomPage() {
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className="flex items-center gap-1.5 text-muted-foreground px-2 h-8">
                   <Users className="h-4 w-4" />
-                  <span className="font-medium">{allParticipantsArray.length}</span>
+                  <span className="font-medium">{allParticipants.size}</span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-64" side="top" align="end">
                   <div className="font-semibold text-sm mb-2">Room Members</div>
                   <ScrollArea className="max-h-48">
                     <div className="space-y-2 pr-2">
-                        {allParticipantsArray.map(p => (
-                            <div key={p.id} className="flex items-center gap-2 text-sm">
+                        {Array.from(allParticipants.entries()).map(([id, p]) => (
+                            <div key={id} className="flex items-center gap-2 text-sm">
                                 <Avatar className="h-7 w-7 text-xs">
                                     <AvatarFallback className="bg-muted text-muted-foreground">{p.name.charAt(0).toUpperCase()}</AvatarFallback>
                                 </Avatar>
-                                <span className="truncate">{p.name}{p.id === socket?.id ? ' (You)' : ''}</span>
+                                <span className="truncate">{p.name}{id === socket?.id ? ' (You)' : ''}</span>
                             </div>
                         ))}
                     </div>
