@@ -3,7 +3,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Mic, MicOff, VideoOff as VideoIconOff, Pin, PinOff, Maximize, Minimize } from 'lucide-react';
+import { Mic, MicOff, VideoOff as VideoIconOff, Pin, PinOff, Maximize, Minimize, ScreenShare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Reaction } from '@/types';
 
@@ -117,8 +117,14 @@ export default function VideoPlayer({
           </div>
         </div>
       ) : (
-        <div className="absolute bottom-2 left-2 right-2 flex items-center gap-2 p-1.5 px-3 bg-black/50 backdrop-blur-sm rounded-lg text-xs text-white">
+        <div className="absolute bottom-2 left-2 flex items-center gap-2 p-1 px-2 bg-black/50 backdrop-blur-sm rounded-lg text-xs text-white">
             <span className="font-medium truncate">{name}</span>
+            {isScreenSharing && (
+              <div className="flex items-center gap-1.5 bg-blue-500/80 text-white font-bold px-2 py-0.5 rounded-md">
+                  <ScreenShare className="h-3 w-3" />
+                  <span>Presenting</span>
+              </div>
+            )}
         </div>
       )}
 
@@ -141,7 +147,7 @@ export default function VideoPlayer({
           </button>
         )}
         
-        {displayVideo && isScreenSharing && (
+        {displayVideo && isScreenSharing && !isLocal && (
           <button
               onClick={handleToggleFullscreen}
               className="p-1.5 bg-black/40 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
