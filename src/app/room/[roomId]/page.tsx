@@ -8,7 +8,7 @@ import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
 import VideoPlayer from '@/components/chat/VideoPlayer';
 import CallControls from '@/components/chat/CallControls';
-import type { Message, RemoteParticipant } from '@/types';
+import type { Message, RemoteParticipant, Reaction } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -75,6 +75,9 @@ function RoomPage() {
 
   const [isChatOpen, setIsChatOpen] = useState(false);
   const isMobile = useIsMobile();
+  
+  const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
+  const [reactions, setReactions] = useState<Reaction[]>([]);
 
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -97,7 +100,6 @@ function RoomPage() {
     });
   }, []);
 
-  // Effect for initializing and cleaning up socket connection
   useEffect(() => {
     if (localParticipantName === 'Anonymous') {
       toast({
@@ -134,12 +136,7 @@ function RoomPage() {
   }, [roomId, localParticipantName, router, toast, cleanupPeerConnection]);
 
 
-  // Effect for handling socket events
-  useEffect(() => {
-    if (!socket) return;
-    
-    const createPeerConnection = (peerId: string, peerName: string): RTCPeerConnection => {
-      // If a PC already exists, close it before creating a new one.
+  const createPeerConnection = useCallback((peerId: string, peerName: string): RTCPeerConnection => {
       if (peerConnectionsRef.current.has(peerId)) {
         cleanupPeerConnection(peerId);
       }
@@ -147,7 +144,7 @@ function RoomPage() {
       const pc = new RTCPeerConnection(ICE_SERVERS);
       
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
+        if (event.candidate && socket) {
           socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
         }
       };
@@ -162,18 +159,26 @@ function RoomPage() {
                 stream: event.streams[0],
                 isAudioEnabled: existingParticipant?.isAudioEnabled ?? true,
                 isVideoEnabled: existingParticipant?.isVideoEnabled ?? true,
+                isScreenSharing: existingParticipant?.isScreenSharing ?? false,
             });
         });
       };
       
       localStreamRef.current?.getTracks().forEach(track => {
-        pc.addTrack(track, localStreamRef.current!);
+          try {
+            pc.addTrack(track, localStreamRef.current!);
+          } catch (e) {
+             console.error(`Error adding track for ${peerId}:`, e);
+          }
       });
 
       peerConnectionsRef.current.set(peerId, pc);
       return pc;
-    };
-    
+  }, [socket, cleanupPeerConnection]);
+
+  useEffect(() => {
+    if (!socket) return;
+        
     const callUser = async (peerId: string, peerName: string) => {
       const pc = createPeerConnection(peerId, peerName);
       try {
@@ -185,26 +190,37 @@ function RoomPage() {
       }
     };
     
-    const handleExistingUsers = (users: {id: string, name: string}[]) => {
+    const handleExistingUsers = (users: {id: string, name: string, isScreenSharing: boolean}[]) => {
       console.log('Received existing users list:', users);
       const newParticipants = new Map<string, {name: string}>();
       users.forEach(user => {
         if (user.id !== socket.id) {
           newParticipants.set(user.id, { name: user.name });
+          if(user.isScreenSharing) {
+            setPinnedUserId(user.id);
+          }
         }
       });
       setAllParticipants(prev => new Map([...prev, ...newParticipants]));
+      if(localStreamRef.current) {
+         users.forEach(user => {
+            if (user.id !== socket.id) callUser(user.id, user.name)
+         });
+      }
     };
 
-    const handleUserJoined = ({ id: peerId, name: peerName }: { id: string; name: string }) => {
+    const handleUserJoined = ({ id: peerId, name: peerName, isScreenSharing }: { id: string; name: string, isScreenSharing: boolean }) => {
       if (peerId === socket.id) return;
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
       setAllParticipants(prev => new Map(prev).set(peerId, { name: peerName }));
       
-      // If we are already in a call, we should initiate a connection to the new user.
       if (localStreamRef.current) {
         console.log(`Already in call, initiating call to new user ${peerName}`);
         callUser(peerId, peerName);
+      }
+
+      if (isScreenSharing) {
+        setPinnedUserId(peerId);
       }
     };
 
@@ -249,6 +265,9 @@ function RoomPage() {
     };
 
     const handleUserDisconnected = (peerId: string) => {
+      if (peerId === pinnedUserId) {
+        setPinnedUserId(null);
+      }
       const participant = allParticipants.get(peerId);
       if (participant) {
         toast({ title: 'User Left', description: `${participant.name} has left the room.` });
@@ -285,6 +304,36 @@ function RoomPage() {
             return newMap;
         });
     };
+
+    const handleScreenShareStarted = ({ userId }: { userId: string }) => {
+        setPinnedUserId(userId);
+        setRemoteParticipants(prev => {
+            const newMap = new Map(prev);
+            const participant = newMap.get(userId);
+            if (participant) {
+                newMap.set(userId, { ...participant, isScreenSharing: true });
+            }
+            return newMap;
+        });
+    };
+
+    const handleScreenShareStopped = ({ userId }: { userId: string }) => {
+        if (pinnedUserId === userId) {
+            setPinnedUserId(null);
+        }
+        setRemoteParticipants(prev => {
+            const newMap = new Map(prev);
+            const participant = newMap.get(userId);
+            if (participant) {
+                newMap.set(userId, { ...participant, isScreenSharing: false });
+            }
+            return newMap;
+        });
+    };
+
+    const handleReceiveEmoji = ({ userId, emoji }: { userId: string, emoji: string }) => {
+        setReactions(prev => [...prev, { userId, emoji, id: Date.now() }]);
+    };
     
     socket.on('existing-users', handleExistingUsers);
     socket.on('user-joined', handleUserJoined);
@@ -296,6 +345,9 @@ function RoomPage() {
     socket.on('previous-messages', handlePreviousMessages);
     socket.on('user-video-state-changed', handleVideoStateChange);
     socket.on('user-audio-state-changed', handleAudioStateChange);
+    socket.on('user-screen-share-started', handleScreenShareStarted);
+    socket.on('user-screen-share-stopped', handleScreenShareStopped);
+    socket.on('receive-emoji', handleReceiveEmoji);
 
     return () => {
       socket.off('existing-users');
@@ -308,8 +360,11 @@ function RoomPage() {
       socket.off('previous-messages');
       socket.off('user-video-state-changed');
       socket.off('user-audio-state-changed');
+      socket.off('user-screen-share-started');
+      socket.off('user-screen-share-stopped');
+      socket.off('receive-emoji');
     };
-  }, [socket, cleanupPeerConnection, toast]);
+  }, [socket, cleanupPeerConnection, toast, createPeerConnection, pinnedUserId]);
 
   
   const joinCall = async () => {
@@ -348,45 +403,10 @@ function RoomPage() {
     }
   };
 
-  const createPeerConnection = (peerId: string, peerName: string): RTCPeerConnection => {
-      if (peerConnectionsRef.current.has(peerId)) {
-        console.log(`PC for ${peerName} already exists. Using existing one.`);
-        return peerConnectionsRef.current.get(peerId)!;
-      }
-      console.log(`Creating new PC for ${peerName}`);
-      const pc = new RTCPeerConnection(ICE_SERVERS);
-      
-      pc.onicecandidate = (event) => {
-        if (event.candidate && socket) {
-          socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
-        }
-      };
-
-      pc.ontrack = (event) => {
-        console.log(`Received remote track from ${peerName} (${peerId})`);
-        setRemoteParticipants(prev => {
-            const existingParticipant = prev.get(peerId);
-            return new Map(prev).set(peerId, { 
-                id: peerId, 
-                name: peerName, 
-                stream: event.streams[0],
-                isAudioEnabled: existingParticipant?.isAudioEnabled ?? true,
-                isVideoEnabled: existingParticipant?.isVideoEnabled ?? true,
-            });
-        });
-      };
-      
-      if(localStreamRef.current){
-        localStreamRef.current.getTracks().forEach(track => {
-          pc.addTrack(track, localStreamRef.current!);
-        });
-      }
-
-      peerConnectionsRef.current.set(peerId, pc);
-      return pc;
-  };
-
   const leaveCall = useCallback(() => {
+    if (isScreenSharing) {
+        toggleScreenShare();
+    }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
     }
@@ -399,7 +419,7 @@ function RoomPage() {
     });
 
     setRemoteParticipants(new Map());
-  }, [cleanupPeerConnection]);
+  }, [cleanupPeerConnection, isScreenSharing]);
 
   const toggleMic = () => {
     if (localStream) {
@@ -429,62 +449,50 @@ function RoomPage() {
 
     const toggleScreenShare = async () => {
         if (isScreenSharing) {
-            // Stop screen sharing by stopping the screen track
-            const screenTrack = localStreamRef.current?.getVideoTracks()[0];
-            if (screenTrack && screenTrack.getSettings().displaySurface) {
-                screenTrack.stop(); // This will trigger the 'onended' event handler
+            const screenTrack = localStreamRef.current?.getVideoTracks().find(t => t.getSettings().displaySurface);
+            if(screenTrack) {
+                screenTrack.stop();
             }
         } else {
-            // Start screen sharing
             try {
                 const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
                 const screenTrack = screenStream.getVideoTracks()[0];
 
                 if (!localStreamRef.current) return;
 
-                // Store current camera track to switch back later
-                const cameraTrack = localStreamRef.current.getVideoTracks()[0];
-                if (cameraTrack) {
-                    cameraVideoTrackRef.current = cameraTrack;
-                } else {
+                const cameraTrack = cameraVideoTrackRef.current || localStreamRef.current.getVideoTracks().find(t => t.kind === 'video' && !t.getSettings().displaySurface);
+                if (!cameraTrack) {
                     toast({ title: "Camera required", description: "Please enable your camera to start screen sharing.", variant: "destructive" });
                     return;
                 }
+                cameraVideoTrackRef.current = cameraTrack;
 
-                // Replace the track in all active peer connections
                 peerConnectionsRef.current.forEach(pc => {
                     const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                    if (sender) {
-                        sender.replaceTrack(screenTrack);
-                    }
+                    if (sender) sender.replaceTrack(screenTrack);
                 });
 
-                // Update local stream for preview
                 localStreamRef.current.removeTrack(cameraTrack);
                 localStreamRef.current.addTrack(screenTrack);
                 setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
                 setIsScreenSharing(true);
+                setPinnedUserId(socket?.id || null);
+                socket?.emit('screen-share-started', { roomId });
                 
-                // Handle when user clicks the browser's "Stop sharing" button
                 screenTrack.onended = () => {
                     if (cameraVideoTrackRef.current && localStreamRef.current) {
-                        // Get the current screen track to remove it
                         const currentScreenTrack = localStreamRef.current.getVideoTracks()[0];
-                        
-                        // Replace screen track with camera track for all peers
                         peerConnectionsRef.current.forEach(pc => {
                             const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                            if (sender) {
-                                sender.replaceTrack(cameraVideoTrackRef.current);
-                            }
+                            if (sender) sender.replaceTrack(cameraVideoTrackRef.current);
                         });
                         
-                        // Update local stream for preview
                         localStreamRef.current.removeTrack(currentScreenTrack);
                         localStreamRef.current.addTrack(cameraVideoTrackRef.current);
                         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-
                         setIsScreenSharing(false);
+                        setPinnedUserId(null);
+                        socket?.emit('screen-share-stopped', { roomId });
                     }
                 };
 
@@ -517,6 +525,12 @@ function RoomPage() {
     socket.emit('send-message', { roomId, message: text });
     setMessages(prev => [...prev, myMessage]);
   };
+
+  const handleSendReaction = (emoji: string) => {
+    if (!socket) return;
+    socket.emit('send-emoji', { roomId, emoji });
+    setReactions(prev => [...prev, { userId: socket.id!, emoji, id: Date.now() }]);
+  };
   
   const videoParticipants = Array.from(remoteParticipants.values());
   if (localStream && isInCall) {
@@ -526,15 +540,11 @@ function RoomPage() {
         stream: localStream,
         isLocal: true,
         isAudioEnabled: isMicEnabled,
-        isVideoEnabled: isVideoEnabled && !isScreenSharing,
+        isVideoEnabled: isVideoEnabled,
+        isScreenSharing: isScreenSharing
     } as any);
   }
   
-  const gridClass = videoParticipants.length <= 1 ? 'grid-cols-1 grid-rows-1'
-                  : videoParticipants.length === 2 ? 'grid-cols-1 md:grid-cols-2 grid-rows-2 md:grid-rows-1'
-                  : videoParticipants.length <= 4 ? 'grid-cols-2 grid-rows-2'
-                  : 'grid-cols-2 lg:grid-cols-3';
-
   const renderChatSidebar = () => (
     <ChatSidebar
       messages={messages}
@@ -546,6 +556,9 @@ function RoomPage() {
     />
   );
   
+  const pinnedParticipant = videoParticipants.find(p => p.id === pinnedUserId);
+  const filmstripParticipants = videoParticipants.filter(p => p.id !== pinnedUserId);
+
   return (
     <div className="flex flex-col h-screen bg-background">
       <RoomHeader 
@@ -598,19 +611,60 @@ function RoomPage() {
               </Card>
             </div>
           ) : (
-            <>
-              <div className={`flex-1 grid gap-2 md:gap-3 overflow-y-auto p-1 mb-2 md:mb-4 animate-fade-in ${gridClass}`}>
-                {videoParticipants.map(participant => (
-                  <VideoPlayer
-                    key={participant.id}
-                    stream={participant.stream}
-                    name={participant.name}
-                    isLocal={participant.id === socket?.id || (participant as any).isLocal}
-                    isAudioEnabled={participant.isAudioEnabled}
-                    isVideoEnabled={participant.isVideoEnabled}
-                  />
-                ))}
-              </div>
+            <div className="flex-1 flex flex-col gap-2 overflow-hidden">
+              {pinnedParticipant ? (
+                // Spotlight Layout
+                <div className="flex-1 flex flex-col min-h-0 gap-2">
+                  <div className="flex-1 bg-card rounded-lg overflow-hidden relative">
+                    <VideoPlayer
+                      key={pinnedParticipant.id}
+                      stream={pinnedParticipant.stream}
+                      name={pinnedParticipant.name}
+                      isLocal={(pinnedParticipant as any).isLocal}
+                      isAudioEnabled={pinnedParticipant.isAudioEnabled}
+                      isVideoEnabled={pinnedParticipant.isVideoEnabled}
+                      reactions={reactions.filter(r => r.userId === pinnedParticipant.id)}
+                      onPin={() => setPinnedUserId(null)}
+                      isPinned={true}
+                      isScreenSharing={pinnedParticipant.isScreenSharing}
+                    />
+                  </div>
+                  <div className="h-28 md:h-36 flex-shrink-0">
+                    <div className="flex gap-2 h-full overflow-x-auto p-1">
+                      {filmstripParticipants.map(participant => (
+                         <div key={participant.id} className="h-full aspect-video flex-shrink-0">
+                           <VideoPlayer
+                             stream={participant.stream}
+                             name={participant.name}
+                             isLocal={(participant as any).isLocal}
+                             isAudioEnabled={participant.isAudioEnabled}
+                             isVideoEnabled={participant.isVideoEnabled}
+                             reactions={reactions.filter(r => r.userId === participant.id)}
+                             onPin={() => setPinnedUserId(participant.id)}
+                           />
+                         </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                // Grid Layout
+                <div className={`flex-1 grid gap-2 overflow-y-auto p-1 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`}>
+                    {videoParticipants.map(participant => (
+                    <VideoPlayer
+                        key={participant.id}
+                        stream={participant.stream}
+                        name={participant.name}
+                        isLocal={(participant as any).isLocal}
+                        isAudioEnabled={participant.isAudioEnabled}
+                        isVideoEnabled={participant.isVideoEnabled}
+                        reactions={reactions.filter(r => r.userId === participant.id)}
+                        onPin={() => setPinnedUserId(participant.id)}
+                        isScreenSharing={participant.isScreenSharing}
+                    />
+                    ))}
+                </div>
+              )}
               <CallControls
                 isMicEnabled={isMicEnabled}
                 isVideoEnabled={isVideoEnabled}
@@ -619,9 +673,10 @@ function RoomPage() {
                 onToggleMic={toggleMic}
                 onToggleVideo={toggleVideo}
                 onToggleScreenShare={toggleScreenShare}
-                className="mt-auto"
+                onSendReaction={handleSendReaction}
+                className="mt-auto mx-auto"
               />
-            </>
+            </div>
           )}
         </main>
         

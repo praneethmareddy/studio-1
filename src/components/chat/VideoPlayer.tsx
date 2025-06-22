@@ -1,10 +1,11 @@
 
 'use client';
 
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Mic, MicOff, Video as VideoIconOn, VideoOff as VideoIconOff } from 'lucide-react';
+import { Mic, MicOff, VideoOff as VideoIconOff, Pin, PinOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { Reaction } from '@/types';
 
 interface VideoPlayerProps {
   stream: MediaStream | null;
@@ -12,6 +13,10 @@ interface VideoPlayerProps {
   name?: string;
   isAudioEnabled?: boolean;
   isVideoEnabled?: boolean; 
+  isScreenSharing?: boolean;
+  isPinned?: boolean;
+  onPin: () => void;
+  reactions: Reaction[];
 }
 
 export default function VideoPlayer({ 
@@ -19,9 +24,14 @@ export default function VideoPlayer({
   isLocal = false, 
   name = 'Participant',
   isAudioEnabled = true,
-  isVideoEnabled = true
+  isVideoEnabled = true,
+  isScreenSharing = false,
+  isPinned = false,
+  onPin,
+  reactions
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [localReactions, setLocalReactions] = useState<Reaction[]>([]);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -29,13 +39,23 @@ export default function VideoPlayer({
     }
   }, [stream]);
 
+  useEffect(() => {
+      if (reactions.length > 0) {
+        const newReaction = reactions[reactions.length -1];
+        setLocalReactions(prev => [...prev, newReaction]);
+        setTimeout(() => {
+            setLocalReactions(prev => prev.filter(r => r.id !== newReaction.id));
+        }, 2000); // 2s duration for animation
+      }
+  }, [reactions]);
+
   const hasVideoTrack = stream?.getVideoTracks().some(track => track.readyState === 'live');
   const displayVideo = stream && hasVideoTrack && isVideoEnabled;
 
   return (
     <div className={cn(
-        "overflow-hidden shadow-lg w-full aspect-video flex flex-col rounded-xl relative", 
-        isLocal ? "border-2 border-primary/70 shadow-glow-primary-md" : "border border-border/50",
+        "group overflow-hidden shadow-lg w-full h-full flex flex-col rounded-lg relative", 
+        isPinned ? "border-2 border-primary/70" : "border border-border/50",
         "bg-muted"
       )}
     >
@@ -45,8 +65,9 @@ export default function VideoPlayer({
         playsInline
         muted={isLocal}
         className={cn(
-          "w-full h-full object-cover transition-opacity duration-300",
-          { "opacity-0 absolute -z-10": !displayVideo }
+          "w-full h-full object-contain transition-opacity duration-300",
+          { "opacity-0 absolute -z-10": !displayVideo },
+          isScreenSharing ? "object-contain" : "object-cover"
         )}
       />
       
@@ -68,13 +89,30 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* Audio status always visible */}
       <div className="absolute top-2 right-2 flex items-center gap-1.5 p-1 bg-black/40 backdrop-blur-sm rounded-full text-xs">
           {isAudioEnabled ? (
             <Mic className="h-3.5 w-3.5 text-green-400" />
           ) : (
             <MicOff className="h-3.5 w-3.5 text-red-400" />
           )}
+      </div>
+
+      {!isLocal && (
+        <button
+            onClick={onPin}
+            className="absolute top-2 left-2 p-1.5 bg-black/40 backdrop-blur-sm rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label={isPinned ? "Unpin participant" : "Pin participant"}
+        >
+            {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+        </button>
+      )}
+
+      <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
+        {localReactions.map(reaction => (
+            <div key={reaction.id} className="absolute animate-float-up text-4xl">
+                {reaction.emoji}
+            </div>
+        ))}
       </div>
     </div>
   );

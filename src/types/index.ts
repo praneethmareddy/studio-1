@@ -1,4 +1,5 @@
 
+
 export interface Message {
   id: string;
   text: string;
@@ -16,6 +17,7 @@ export interface RemoteParticipant {
   stream: MediaStream;
   isAudioEnabled: boolean;
   isVideoEnabled: boolean;
+  isScreenSharing: boolean;
 }
 
 export interface VideoParticipant {
@@ -25,4 +27,11 @@ export interface VideoParticipant {
     isLocal: boolean;
     isAudioEnabled: boolean;
     isVideoEnabled: boolean;
+    isScreenSharing: boolean;
+}
+
+export interface Reaction {
+  userId: string;
+  emoji: string;
+  id: number; // unique id for animation key
 }

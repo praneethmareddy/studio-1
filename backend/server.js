@@ -47,13 +47,10 @@ const messageSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now }
 });
 
-// We can add a virtual 'id' property to our schema.
-// This will exist on the document instance, but not be saved to MongoDB.
 messageSchema.virtual('id').get(function(){
   return this._id.toHexString();
 });
 
-// Ensure virtuals are included in toJSON and toObject outputs
 messageSchema.set('toJSON', {
   virtuals: true
 });
@@ -79,28 +76,25 @@ io.on("connection", (socket) => {
     if (!rooms[roomId]) {
       rooms[roomId] = {};
     }
-    rooms[roomId][socket.id] = { name };
+    rooms[roomId][socket.id] = { name, isScreenSharing: false };
     
     console.log(`✅ ${name} (${socket.id}) joined room: ${roomId}`);
     
-    // Get list of all other users in the room
     const otherUsers = Object.keys(rooms[roomId])
       .filter(id => id !== socket.id)
-      .map(id => ({ id, name: rooms[roomId][id].name }));
+      .map(id => ({ id, ...rooms[roomId][id] }));
 
-    // Send the list of existing users to the newly joined user
     socket.emit("existing-users", otherUsers);
     
-    // Send previous messages to the newly joined user
     if (MONGO_URI) {
       const messages = await Message.find({ roomId }).sort({ timestamp: 1 });
       socket.emit("previous-messages", messages.map(m => m.toJSON()));
     }
 
-    // Notify others in the room
     socket.to(roomId).emit("user-joined", {
       id: socket.id,
-      name
+      name,
+      isScreenSharing: false
     });
   });
 
@@ -121,66 +115,69 @@ io.on("connection", (socket) => {
 
     if (MONGO_URI) {
       const savedMsg = await new Message(msgData).save();
-      messageToSend = savedMsg.toJSON(); // Use toJSON to get virtuals
+      messageToSend = savedMsg.toJSON();
     } else {
       messageToSend = { ...msgData, id: `${socket.id}-${Date.now()}` };
     }
 
-    // Send to other users in the room
     socket.to(roomId).emit("receive-message", messageToSend);
+  });
+
+  socket.on("send-emoji", ({ roomId, emoji }) => {
+    socket.to(roomId).emit("receive-emoji", { userId: socket.id, emoji });
   });
 
   // WebRTC Offer
   socket.on("offer", ({ target, sdp, name }) => {
-    io.to(target).emit("offer", {
-      sdp,
-      caller: socket.id,
-      name
-    });
+    io.to(target).emit("offer", { sdp, caller: socket.id, name });
   });
 
   // WebRTC Answer
   socket.on("answer", ({ target, sdp, name }) => {
-    io.to(target).emit("answer", {
-      sdp,
-      answerer: socket.id,
-      name
-    });
+    io.to(target).emit("answer", { sdp, answerer: socket.id, name });
   });
 
   // ICE Candidate
   socket.on("ice-candidate", ({ target, candidate }) => {
-    io.to(target).emit("ice-candidate", {
-      candidate,
-      from: socket.id
-    });
+    io.to(target).emit("ice-candidate", { candidate, from: socket.id });
   });
 
   // Media State Changes
   socket.on("video-state-changed", ({ roomId, isVideoEnabled }) => {
-    socket.to(roomId).emit("user-video-state-changed", {
-        userId: socket.id,
-        isVideoEnabled,
-    });
+    socket.to(roomId).emit("user-video-state-changed", { userId: socket.id, isVideoEnabled });
   });
 
   socket.on("audio-state-changed", ({ roomId, isAudioEnabled }) => {
-      socket.to(roomId).emit("user-audio-state-changed", {
-          userId: socket.id,
-          isAudioEnabled,
-      });
+      socket.to(roomId).emit("user-audio-state-changed", { userId: socket.id, isAudioEnabled });
   });
 
+  socket.on("screen-share-started", ({ roomId }) => {
+    if (rooms[roomId]?.[socket.id]) {
+        rooms[roomId][socket.id].isScreenSharing = true;
+    }
+    socket.to(roomId).emit("user-screen-share-started", { userId: socket.id });
+  });
+
+  socket.on("screen-share-stopped", ({ roomId }) => {
+      if (rooms[roomId]?.[socket.id]) {
+          rooms[roomId][socket.id].isScreenSharing = false;
+      }
+      socket.to(roomId).emit("user-screen-share-stopped", { userId: socket.id });
+  });
 
   // Disconnect Handling
   socket.on("disconnect", () => {
     let userRoomId = null;
     let userName = 'Unknown';
-    // Find the room the user was in
+    let wasScreenSharing = false;
+    
     for (const roomId in rooms) {
         if (rooms[roomId][socket.id]) {
             userRoomId = roomId;
-            userName = rooms[roomId][socket.id].name;
+            const user = rooms[roomId][socket.id];
+            userName = user.name;
+            wasScreenSharing = user.isScreenSharing;
+            
             delete rooms[roomId][socket.id];
             if (Object.keys(rooms[roomId]).length === 0) {
                 delete rooms[roomId];
@@ -190,6 +187,9 @@ io.on("connection", (socket) => {
     }
     
     if (userRoomId) {
+        if (wasScreenSharing) {
+            io.to(userRoomId).emit("user-screen-share-stopped", { userId: socket.id });
+        }
         io.to(userRoomId).emit("user-disconnected", socket.id);
         console.log(`❌ ${userName} (${socket.id}) disconnected from room ${userRoomId}`);
     } else {
