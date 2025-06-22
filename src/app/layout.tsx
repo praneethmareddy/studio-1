@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from '@/components/theme/theme-provider';
-import { ThemeToggleButton } from '@/components/theme/theme-toggle-button';
 
 export const metadata: Metadata = {
   title: 'CommVerse',
@@ -28,9 +27,6 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <div className="fixed top-4 right-4 z-50">
-            <ThemeToggleButton />
-          </div>
           {children}
           <Toaster />
         </ThemeProvider>

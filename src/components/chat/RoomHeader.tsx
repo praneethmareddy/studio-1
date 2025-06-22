@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from '../ui/avatar';
 import type { VideoParticipant } from '@/types';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { ThemeToggleButton } from '../theme/theme-toggle-button';
 
 
 interface RoomHeaderProps {
@@ -89,17 +90,20 @@ export default function RoomHeader({ roomId, videoParticipants, onToggleChat, is
           </div>
         </div>
 
-        <Button
-          onClick={onToggleChat}
-          variant="outline"
-          className={cn(
-            "h-9 px-3",
-            !isMobile && isChatOpen && "bg-accent text-accent-foreground"
-          )}
-        >
-          {isChatOpen && !isMobile ? <X className="h-5 w-5 md:mr-2" /> : <MessageSquare className="h-5 w-5 md:mr-2" />}
-          <span className="hidden md:inline">{isChatOpen && !isMobile ? 'Close' : 'Chat'}</span>
-        </Button>
+        <div className="flex items-center gap-2">
+            <Button
+              onClick={onToggleChat}
+              variant="outline"
+              size="icon"
+              className={cn(
+                !isMobile && isChatOpen && "bg-accent text-accent-foreground"
+              )}
+            >
+                {isChatOpen && !isMobile ? <X className="h-5 w-5" /> : <MessageSquare className="h-5 w-5" />}
+                <span className="sr-only">{isChatOpen && !isMobile ? "Close Chat" : "Open Chat"}</span>
+            </Button>
+            <ThemeToggleButton />
+        </div>
        
       </div>
     </header>
