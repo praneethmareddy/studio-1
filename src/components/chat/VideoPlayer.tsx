@@ -36,20 +36,22 @@ export default function VideoPlayer({
     <Card className={cn(
         "overflow-hidden shadow-md w-full aspect-video flex flex-col rounded-lg", 
         isLocal ? "border-2 border-primary/70 shadow-glow-primary-sm" : "border border-border/50",
-        !displayVideo && "bg-muted"
+        "bg-muted" // Always have a background for the avatar to show against
       )}
     >
       <CardContent className="p-0 relative flex-1 flex items-center justify-center">
-        {displayVideo ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted={isLocal} 
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center text-muted-foreground h-full w-full p-4">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={isLocal}
+          className={cn(
+            "w-full h-full object-cover transition-opacity duration-300",
+            { "opacity-0": !displayVideo }
+          )}
+        />
+        {!displayVideo && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground h-full w-full p-4">
             <Avatar className="w-20 h-20 text-3xl">
               <AvatarFallback className="bg-background text-muted-foreground">
                 {name.charAt(0).toUpperCase()}
