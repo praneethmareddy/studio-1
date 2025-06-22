@@ -6,6 +6,7 @@ This guide will walk you through deploying both the Next.js frontend and the Exp
 
 1.  A [Render](https://render.com/) account.
 2.  Your code pushed to a GitHub repository.
+3.  A [Google AI API Key](https://aistudio.google.com/app/apikey) for the chat summarization feature.
 
 ---
 
@@ -56,10 +57,13 @@ Now, let's deploy the frontend and connect it to the live backend.
     *   **Start Command**: `npm start`.
     *   **Instance Type**: `Free`.
 
-4.  Click **Advanced** to add the environment variable for your backend URL.
+4.  Click **Advanced** to add the environment variables.
     *   Click **Add Environment Variable**.
     *   **Key**: `NEXT_PUBLIC_SIGNALING_SERVER_URL`
     *   **Value**: Paste the URL of your deployed backend service that you copied in the previous step (e.g., `https://commverse-backend-xxxx.onrender.com`).
+    *   Click **Add Environment Variable** again.
+    *   **Key**: `GOOGLE_API_KEY`
+    *   **Value**: Paste your Google AI API key here.
 
 5.  Click **Create Web Service**.
 

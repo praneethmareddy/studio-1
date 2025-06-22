@@ -2,19 +2,25 @@
 
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { Copy, Users } from 'lucide-react';
+import { Copy, Users, MessageSquare, X } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import type { VideoParticipant } from '@/types';
+import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-mobile';
+
 
 interface RoomHeaderProps {
   roomId: string;
   videoParticipants: VideoParticipant[];
+  onToggleChat: () => void;
+  isChatOpen: boolean;
 }
 
-export default function RoomHeader({ roomId, videoParticipants }: RoomHeaderProps) {
+export default function RoomHeader({ roomId, videoParticipants, onToggleChat, isChatOpen }: RoomHeaderProps) {
   const { toast } = useToast();
+  const isMobile = useIsMobile();
 
   const handleCopyId = async () => {
     if (!roomId) return;
@@ -82,6 +88,18 @@ export default function RoomHeader({ roomId, videoParticipants }: RoomHeaderProp
             </Button>
           </div>
         </div>
+
+        <Button
+          onClick={onToggleChat}
+          variant="outline"
+          className={cn(
+            "h-9 px-3",
+            !isMobile && isChatOpen && "bg-accent text-accent-foreground"
+          )}
+        >
+          {isChatOpen && !isMobile ? <X className="h-5 w-5 md:mr-2" /> : <MessageSquare className="h-5 w-5 md:mr-2" />}
+          <span className="hidden md:inline">{isChatOpen && !isMobile ? 'Close' : 'Chat'}</span>
+        </Button>
        
       </div>
     </header>

@@ -3,27 +3,42 @@
 
 import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { io, Socket } from 'socket.io-client';
 import RoomHeader from '@/components/chat/RoomHeader';
-import ChatInput from '@/components/chat/ChatInput';
-import ChatMessage from '@/components/chat/ChatMessage';
-import ChatSummary from '@/components/chat/ChatSummary';
 import VideoPlayer from '@/components/chat/VideoPlayer';
 import CallControls from '@/components/chat/CallControls';
 import type { Message, RemoteParticipant } from '@/types';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Video as VideoIcon, AlertTriangle, Loader2, RefreshCw, Users } from 'lucide-react';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Video as VideoIcon, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const SIGNALING_SERVER_URL = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:5000';
 
 const ICE_SERVERS = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
+
+const ChatSidebar = dynamic(() => import('@/components/chat/ChatSidebar'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full md:w-[340px] lg:w-[380px] border-t md:border-t-0 md:border-l border-border/50 bg-card flex flex-col p-4 gap-4">
+       <Skeleton className="h-8 w-1/2" />
+       <div className="flex-1 space-y-4">
+        <Skeleton className="h-16 w-3/4" />
+        <Skeleton className="h-16 w-3/4 ml-auto" />
+        <Skeleton className="h-12 w-2/3" />
+       </div>
+       <Skeleton className="h-10 w-full" />
+       <Skeleton className="h-24 w-full" />
+    </div>
+  ),
+});
+
 
 export default function RoomPageWrapper() {
   return (
@@ -57,9 +72,11 @@ function RoomPage() {
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [mediaError, setMediaError] = useState<string | null>(null);
 
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const isMobile = useIsMobile();
+
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const localParticipantNameRef = useRef(localParticipantName);
   localParticipantNameRef.current = localParticipantName;
@@ -292,9 +309,6 @@ function RoomPage() {
     };
   }, [socket, cleanupPeerConnection, toast]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
   
   const joinCall = async () => {
     setMediaError(null);
@@ -304,7 +318,6 @@ function RoomPage() {
       setLocalStream(stream);
       setIsInCall(true);
       
-      // Proactively call all existing users
       allParticipants.forEach((participant, peerId) => {
         if (peerId !== socket?.id) {
           console.log(`Joining call, initiating call to existing user ${participant.name}`);
@@ -437,12 +450,28 @@ function RoomPage() {
                   : videoParticipants.length <= 4 ? 'grid-cols-2 grid-rows-2'
                   : 'grid-cols-2 lg:grid-cols-3';
 
+  const renderChatSidebar = () => (
+    <ChatSidebar
+      messages={messages}
+      allParticipants={allParticipants}
+      socket={socket}
+      onSendMessage={handleSendMessage}
+      onClose={() => setIsChatOpen(false)}
+      isMobile={isMobile}
+    />
+  );
+  
   return (
     <div className="flex flex-col h-screen bg-background">
-      <RoomHeader roomId={roomId} videoParticipants={videoParticipants} />
+      <RoomHeader 
+        roomId={roomId} 
+        videoParticipants={videoParticipants} 
+        onToggleChat={() => setIsChatOpen(!isChatOpen)}
+        isChatOpen={isChatOpen}
+      />
 
-      <div className="flex flex-1 overflow-hidden md:flex-row flex-col">
-        <main className="flex-1 flex flex-col p-2 md:p-4 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden">
+        <main className="flex-1 flex flex-col p-2 md:p-4 overflow-hidden transition-all duration-300">
           {!isInCall ? (
             <div className="flex-1 flex flex-col items-center justify-center bg-card/50 rounded-lg shadow-inner p-4 animate-fade-in">
               <Card className="p-6 text-center shadow-xl max-w-md w-full border-border/50 hover:shadow-2xl transition-shadow duration-300 rounded-xl">
@@ -508,54 +537,18 @@ function RoomPage() {
             </>
           )}
         </main>
-
-        <aside className="w-full md:w-[340px] lg:w-[380px] border-t md:border-t-0 md:border-l border-border/50 bg-card flex flex-col shadow-lg max-h-full md:max-h-[calc(100vh-var(--header-height,65px))]">
-          <div className="p-3 border-b border-border/50 sticky top-0 bg-card z-10 flex justify-between items-center">
-            <h2 className="text-lg font-semibold text-primary tracking-tight">Live Chat</h2>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="flex items-center gap-1.5 text-muted-foreground px-2 h-8">
-                  <Users className="h-4 w-4" />
-                  <span className="font-medium">{allParticipants.size}</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64" side="top" align="end">
-                  <div className="font-semibold text-sm mb-2">Room Members</div>
-                  <ScrollArea className="max-h-48">
-                    <div className="space-y-2 pr-2">
-                        {Array.from(allParticipants.entries()).map(([id, p]) => (
-                            <div key={id} className="flex items-center gap-2 text-sm">
-                                <Avatar className="h-7 w-7 text-xs">
-                                    <AvatarFallback className="bg-muted text-muted-foreground">{p.name.charAt(0).toUpperCase()}</AvatarFallback>
-                                </Avatar>
-                                <span className="truncate">{p.name}{id === socket?.id ? ' (You)' : ''}</span>
-                            </div>
-                        ))}
-                    </div>
-                  </ScrollArea>
-              </PopoverContent>
-            </Popover>
-          </div>
-          <ScrollArea className="flex-1 p-2 md:p-3">
-            <div className="space-y-3">
-              {messages.map(msg => (
-                <ChatMessage
-                  key={msg.id}
-                  message={msg}
-                  isCurrentUser={msg.userId === socket?.id}
-                />
-              ))}
-            </div>
-            <div ref={messagesEndRef} />
-          </ScrollArea>
-          
-          <ChatInput onSendMessage={handleSendMessage} disabled={!socket} />
-          
-          <div className="border-t border-border/50 bg-background/30">
-            <ChatSummary messages={messages} />
-          </div>
-        </aside>
+        
+        {!isMobile && isChatOpen && renderChatSidebar()}
+        
       </div>
+      
+      {isMobile && (
+          <Sheet open={isChatOpen} onOpenChange={setIsChatOpen}>
+              <SheetContent side="right" className="w-[85vw] p-0 border-none">
+                  {renderChatSidebar()}
+              </SheetContent>
+          </Sheet>
+      )}
     </div>
   );
 }

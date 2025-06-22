@@ -23,7 +23,7 @@ export type SummarizeChatInput = z.infer<
 const SummarizeChatOutputSchema = z.object({
   summary: z
     .string()
-    .describe('A concise summary of the chat content.'),
+    .describe('A brief, professional summary of the chat transcript.'),
 });
 export type SummarizeChatOutput = z.infer<
   typeof SummarizeChatOutputSchema
@@ -39,13 +39,16 @@ const prompt = ai.definePrompt({
   name: 'summarizeChatPrompt',
   input: {schema: SummarizeChatInputSchema},
   output: {schema: SummarizeChatOutputSchema},
-  prompt: `You are an AI assistant designed to summarize conversations.
+  prompt: `You are an expert meeting assistant. Your task is to analyze the following chat transcript and provide a brief, professional summary. 
 
-  Based on the chat content provided, provide a concise summary of the key points.
+Focus on the main topics discussed, key decisions made, and any action items identified. 
+  
+Present the summary in a clear, easy-to-read format. Use bullet points for key items if it improves clarity.
 
-  Chat Content: {{{chatContent}}}
+Chat Transcript:
+{{{chatContent}}}
 
-  Summary:`,
+Summary:`,
 });
 
 const summarizeChatFlow = ai.defineFlow(

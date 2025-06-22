@@ -1,4 +1,3 @@
-
 // server.js
 
 require("dotenv").config();
@@ -48,6 +47,20 @@ const messageSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now }
 });
 
+// We can add a virtual 'id' property to our schema.
+// This will exist on the document instance, but not be saved to MongoDB.
+messageSchema.virtual('id').get(function(){
+  return this._id.toHexString();
+});
+
+// Ensure virtuals are included in toJSON and toObject outputs
+messageSchema.set('toJSON', {
+  virtuals: true
+});
+messageSchema.set('toObject', {
+    virtuals: true
+});
+
 const Message = mongoose.model("Message", messageSchema);
 
 // --- In-Memory Store for Socket Info ---
@@ -81,7 +94,7 @@ io.on("connection", (socket) => {
     // Send previous messages to the newly joined user
     if (MONGO_URI) {
       const messages = await Message.find({ roomId }).sort({ timestamp: 1 });
-      socket.emit("previous-messages", messages);
+      socket.emit("previous-messages", messages.map(m => m.toJSON()));
     }
 
     // Notify others in the room
@@ -96,7 +109,7 @@ io.on("connection", (socket) => {
     const user = rooms[roomId]?.[socket.id];
     if (!user || !roomId || !message) return;
 
-    const newMsg = {
+    const msgData = {
       roomId,
       text: message,
       userId: socket.id,
@@ -104,13 +117,17 @@ io.on("connection", (socket) => {
       timestamp: new Date()
     };
     
-    // Save to DB if connected
+    let messageToSend;
+
     if (MONGO_URI) {
-      await new Message(newMsg).save();
+      const savedMsg = await new Message(msgData).save();
+      messageToSend = savedMsg.toJSON(); // Use toJSON to get virtuals
+    } else {
+      messageToSend = { ...msgData, id: `${socket.id}-${Date.now()}` };
     }
 
     // Send to other users in the room
-    socket.to(roomId).emit("receive-message", newMsg);
+    socket.to(roomId).emit("receive-message", messageToSend);
   });
 
   // WebRTC Offer
