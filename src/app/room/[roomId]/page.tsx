@@ -180,33 +180,38 @@ function RoomPage() {
 
 
   const stopScreenShare = useCallback(() => {
-    if (!cameraVideoTrackRef.current || !micAudioTrackRef.current || !localStreamRef.current) return;
+    if (!cameraVideoTrackRef.current || !localStreamRef.current) return;
   
-    // Find screen tracks in the local stream
     const screenVideoTrack = localStreamRef.current.getVideoTracks().find(track => track.getSettings().displaySurface);
-    const screenAudioTrack = localStreamRef.current.getAudioTracks().find(track => track.id !== micAudioTrackRef.current!.id);
-
-    // Restore original tracks on all peer connections
+  
     peerConnectionsRef.current.forEach(pc => {
       const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
-      if (videoSender) videoSender.replaceTrack(cameraVideoTrackRef.current);
-      
-      const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
-      if (audioSender) audioSender.replaceTrack(micAudioTrackRef.current);
+      if (videoSender && cameraVideoTrackRef.current) {
+          videoSender.replaceTrack(cameraVideoTrackRef.current);
+      }
+      // Audio sender handling is tricky because screen audio is optional.
+      // A simple approach is to always replace with the mic track.
+      if (micAudioTrackRef.current) {
+        const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
+        if (audioSender) audioSender.replaceTrack(micAudioTrackRef.current);
+      }
     });
     
-    // Update local stream object and stop the screen tracks
-    if (screenVideoTrack) {
-        localStreamRef.current.removeTrack(screenVideoTrack);
-        screenVideoTrack.stop();
+    // Stop and remove screen tracks from the local stream
+    localStreamRef.current.getTracks().forEach(track => {
+        if(track.getSettings().displaySurface || track.id !== micAudioTrackRef.current?.id) {
+            track.stop();
+            localStreamRef.current.removeTrack(track);
+        }
+    });
+
+    // Re-add original camera and mic tracks if they are not already there
+    if(cameraVideoTrackRef.current && !localStreamRef.current.getVideoTracks().length) {
+        localStreamRef.current.addTrack(cameraVideoTrackRef.current);
     }
-    if (screenAudioTrack) {
-        localStreamRef.current.removeTrack(screenAudioTrack);
-        screenAudioTrack.stop();
+     if(micAudioTrackRef.current && !localStreamRef.current.getAudioTracks().length) {
+        localStreamRef.current.addTrack(micAudioTrackRef.current);
     }
-  
-    localStreamRef.current.addTrack(cameraVideoTrackRef.current);
-    localStreamRef.current.addTrack(micAudioTrackRef.current);
   
     setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
     setIsScreenSharing(false);
@@ -217,9 +222,6 @@ function RoomPage() {
   
     socket?.emit('screen-share-stopped', { roomId });
     
-    // Reset refs
-    cameraVideoTrackRef.current = null;
-    micAudioTrackRef.current = null;
   }, [socket, roomId, pinnedUserId]);
 
 
@@ -272,10 +274,6 @@ function RoomPage() {
     };
 
     const handleReceiveOffer = async ({ caller, sdp, name: callerName }: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-      if (!localStreamRef.current) {
-        console.warn('Offer received, but local stream is not ready. Ignoring offer.');
-        return;
-      }
       console.log(`Received offer from ${callerName}`);
       const pc = createPeerConnection(caller, callerName);
       try {
@@ -434,6 +432,8 @@ function RoomPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localStreamRef.current = stream;
+      micAudioTrackRef.current = stream.getAudioTracks()[0];
+      cameraVideoTrackRef.current = stream.getVideoTracks()[0];
       setLocalStream(stream);
       setIsInCall(true);
       
@@ -516,21 +516,14 @@ function RoomPage() {
           try {
               const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
               
+              if (!localStreamRef.current) return;
+              
+              // Store original tracks if not already stored
+              if (!cameraVideoTrackRef.current) cameraVideoTrackRef.current = localStreamRef.current.getVideoTracks()[0];
+              if (!micAudioTrackRef.current) micAudioTrackRef.current = localStreamRef.current.getAudioTracks()[0];
+
               const screenVideoTrack = screenStream.getVideoTracks()[0];
               const screenAudioTrack = screenStream.getAudioTracks()[0];
-
-              if (!localStreamRef.current) return;
-
-              const cameraTrack = localStreamRef.current.getVideoTracks()[0];
-              const micTrack = localStreamRef.current.getAudioTracks()[0];
-
-              if (!cameraTrack || !micTrack) {
-                  toast({ title: "Media Error", description: "Camera and microphone must be enabled to share screen.", variant: "destructive" });
-                  screenStream.getTracks().forEach(track => track.stop());
-                  return;
-              }
-              cameraVideoTrackRef.current = cameraTrack;
-              micAudioTrackRef.current = micTrack;
               
               peerConnectionsRef.current.forEach(pc => {
                   const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -542,11 +535,15 @@ function RoomPage() {
                   }
               });
 
-              localStreamRef.current.removeTrack(cameraVideoTrackRef.current);
+              // Replace tracks in local stream for local preview
+              const currentVideoTrack = localStreamRef.current.getVideoTracks()[0];
+              if(currentVideoTrack) localStreamRef.current.removeTrack(currentVideoTrack);
               localStreamRef.current.addTrack(screenVideoTrack);
+
               if (screenAudioTrack) {
-                  localStreamRef.current.removeTrack(micAudioTrackRef.current);
-                  localStreamRef.current.addTrack(screenAudioTrack);
+                const currentAudioTrack = localStreamRef.current.getAudioTracks()[0];
+                if(currentAudioTrack) localStreamRef.current.removeTrack(currentAudioTrack);
+                localStreamRef.current.addTrack(screenAudioTrack);
               }
               
               setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
