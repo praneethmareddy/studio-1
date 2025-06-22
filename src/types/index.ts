@@ -14,6 +14,8 @@ export interface RemoteParticipant {
   id: string; // socket.id
   name: string;
   stream: MediaStream;
+  isAudioEnabled: boolean;
+  isVideoEnabled: boolean;
 }
 
 export interface VideoParticipant {

@@ -1,3 +1,4 @@
+
 // server.js
 
 require("dotenv").config();
@@ -137,6 +138,22 @@ io.on("connection", (socket) => {
       from: socket.id
     });
   });
+
+  // Media State Changes
+  socket.on("video-state-changed", ({ roomId, isVideoEnabled }) => {
+    socket.to(roomId).emit("user-video-state-changed", {
+        userId: socket.id,
+        isVideoEnabled,
+    });
+  });
+
+  socket.on("audio-state-changed", ({ roomId, isAudioEnabled }) => {
+      socket.to(roomId).emit("user-audio-state-changed", {
+          userId: socket.id,
+          isAudioEnabled,
+      });
+  });
+
 
   // Disconnect Handling
   socket.on("disconnect", () => {

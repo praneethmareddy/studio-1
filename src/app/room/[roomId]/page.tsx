@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useEffect, useState, useRef, useCallback, Suspense, useMemo } from 'react';
@@ -59,7 +60,7 @@ function RoomPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const localParticipantNameRef = useRef(localParticipantName);
-  localParticipantNameRef.current = localParticipantName; // Keep ref updated without causing re-renders
+  localParticipantNameRef.current = localParticipantName;
 
 
   const cleanupPeerConnection = useCallback((peerId: string) => {
@@ -70,7 +71,6 @@ function RoomPage() {
     }
   }, []);
 
-  // Effect for establishing and cleaning up socket connection
   useEffect(() => {
     if (localParticipantName === 'Anonymous') {
       toast({
@@ -108,9 +108,8 @@ function RoomPage() {
       cleanup();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]); // This effect should only run once when the component mounts or roomId changes.
+  }, [roomId]);
 
-  // Effect for handling all signaling and chat logic
   useEffect(() => {
     if (!socket) return;
 
@@ -129,12 +128,17 @@ function RoomPage() {
 
       pc.ontrack = (event) => {
         console.log(`Received remote track from ${peerName} (${peerId})`);
-        setRemoteParticipants(prev => new Map(prev).set(peerId, { id: peerId, name: peerName, stream: event.streams[0] }));
+        setRemoteParticipants(prev => new Map(prev).set(peerId, { 
+          id: peerId, 
+          name: peerName, 
+          stream: event.streams[0],
+          isAudioEnabled: true,
+          isVideoEnabled: true,
+        }));
       };
       
       pc.onnegotiationneeded = async () => {
         try {
-          // Check if the connection is stable before creating an offer
           if (pc.signalingState === 'stable') {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
@@ -156,7 +160,6 @@ function RoomPage() {
         if (user.id !== socket.id) {
           newParticipants.set(user.id, { name: user.name });
           const pc = createPeerConnection(user.id, user.name);
-          // If we are already in a call, add tracks to new PCs
           if (localStream) {
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
           }
@@ -172,7 +175,6 @@ function RoomPage() {
       setAllParticipants(prev => new Map(prev).set(peerId, { name: peerName }));
       
       const pc = createPeerConnection(peerId, peerName);
-      // If we are already in a call, add tracks to the new peer's connection
       if (localStream) {
         localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
       }
@@ -180,7 +182,7 @@ function RoomPage() {
 
     const handleReceiveOffer = async (data: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
       if (!localStream) {
-        return; // Don't answer if we're not in the call
+        return;
       }
       const pc = createPeerConnection(data.caller, data.name);
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
@@ -232,6 +234,28 @@ function RoomPage() {
     const handlePreviousMessages = (history: Message[]) => {
        setMessages(history);
     }
+
+    const handleVideoStateChange = ({ userId, isVideoEnabled }: { userId: string, isVideoEnabled: boolean }) => {
+      setRemoteParticipants(prev => {
+          const newMap = new Map(prev);
+          const participant = newMap.get(userId);
+          if (participant) {
+              newMap.set(userId, { ...participant, isVideoEnabled });
+          }
+          return newMap;
+      });
+    };
+  
+    const handleAudioStateChange = ({ userId, isAudioEnabled }: { userId:string, isAudioEnabled: boolean }) => {
+        setRemoteParticipants(prev => {
+            const newMap = new Map(prev);
+            const participant = newMap.get(userId);
+            if (participant) {
+                newMap.set(userId, { ...participant, isAudioEnabled });
+            }
+            return newMap;
+        });
+    };
     
     socket.on('existing-users', handleExistingUsers);
     socket.on('user-joined', handleUserJoined);
@@ -241,6 +265,8 @@ function RoomPage() {
     socket.on('user-disconnected', handleUserDisconnected);
     socket.on('receive-message', handleReceiveMessage);
     socket.on('previous-messages', handlePreviousMessages);
+    socket.on('user-video-state-changed', handleVideoStateChange);
+    socket.on('user-audio-state-changed', handleAudioStateChange);
 
     return () => {
       socket.off('existing-users');
@@ -251,6 +277,8 @@ function RoomPage() {
       socket.off('user-disconnected');
       socket.off('receive-message');
       socket.off('previous-messages');
+      socket.off('user-video-state-changed', handleVideoStateChange);
+      socket.off('user-audio-state-changed', handleAudioStateChange);
     };
   }, [socket, localStream, cleanupPeerConnection, toast]);
 
@@ -265,7 +293,6 @@ function RoomPage() {
       setLocalStream(stream);
       setIsInCall(true);
 
-      // Add tracks to all existing peer connections
       peerConnectionsRef.current.forEach(pc => {
         stream.getTracks().forEach(track => {
           pc.addTrack(track, stream);
@@ -290,7 +317,6 @@ function RoomPage() {
     setLocalStream(null);
     setIsInCall(false);
     
-    // Remove tracks from all peer connections
     peerConnectionsRef.current.forEach(pc => {
       pc.getSenders().forEach(sender => {
         pc.removeTrack(sender);
@@ -305,6 +331,7 @@ function RoomPage() {
       const newMicState = !isMicEnabled;
       localStream.getAudioTracks().forEach(track => (track.enabled = newMicState));
       setIsMicEnabled(newMicState);
+      socket?.emit('audio-state-changed', { roomId, isAudioEnabled: newMicState });
     }
   };
 
@@ -313,6 +340,7 @@ function RoomPage() {
       const newVideoState = !isVideoEnabled;
       localStream.getVideoTracks().forEach(track => (track.enabled = newVideoState));
       setIsVideoEnabled(newVideoState);
+      socket?.emit('video-state-changed', { roomId, isVideoEnabled: newVideoState });
     }
   };
 
@@ -334,7 +362,14 @@ function RoomPage() {
   
   const videoParticipants = useMemo(() => {
     const remoteP = Array.from(remoteParticipants.values());
-    const participants = remoteP.map(p => ({ id: p.id, name: p.name, stream: p.stream, isLocal: false, isAudioEnabled: true, isVideoEnabled: true }));
+    const participants = remoteP.map(p => ({
+        id: p.id,
+        name: p.name,
+        stream: p.stream,
+        isLocal: false,
+        isAudioEnabled: p.isAudioEnabled,
+        isVideoEnabled: p.isVideoEnabled,
+    }));
     if (localStream && isInCall) {
         participants.unshift({ id: socket?.id || 'local', name: `${localParticipantName} (You)`, stream: localStream, isLocal: true, isAudioEnabled: isMicEnabled, isVideoEnabled: isVideoEnabled });
     }
