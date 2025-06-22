@@ -16,6 +16,7 @@ import { Video as VideoIcon, AlertTriangle, Loader2, RefreshCw } from 'lucide-re
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 
 const SIGNALING_SERVER_URL = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:5000';
 
@@ -568,6 +569,22 @@ function RoomPage() {
     />
   );
   
+  const getGridLayoutClassName = (count: number) => {
+    if (count <= 1) {
+      return 'max-w-4xl mx-auto grid-cols-1';
+    }
+    if (count === 2) {
+      return 'grid-cols-1 sm:grid-cols-2';
+    }
+    if (count <= 4) {
+      return 'grid-cols-2';
+    }
+    if (count <= 9) {
+      return 'grid-cols-2 md:grid-cols-3';
+    }
+    return 'grid-cols-3 lg:grid-cols-4';
+  };
+
   const pinnedParticipant = videoParticipants.find(p => p.id === pinnedUserId);
   const filmstripParticipants = videoParticipants.filter(p => p.id !== pinnedUserId);
 
@@ -661,7 +678,10 @@ function RoomPage() {
                 </div>
               ) : (
                 // Grid Layout
-                <div className={`flex-1 grid gap-2 overflow-y-auto p-1 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4`}>
+                <div className={cn(
+                  "flex-1 grid gap-2 overflow-y-auto p-1", 
+                  getGridLayoutClassName(videoParticipants.length)
+                )}>
                     {videoParticipants.map(participant => (
                       <div key={participant.id} className="aspect-video min-w-0">
                         <VideoPlayer
