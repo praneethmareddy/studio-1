@@ -92,12 +92,10 @@ function RoomPage() {
 
     const newSocket = io(SIGNALING_SERVER_URL);
     setSocket(newSocket);
-    
-    setAllParticipants(new Map([[newSocket.id, { name: localParticipantName }]]));
 
     newSocket.on('connect', () => {
       console.log('Socket connected:', newSocket.id);
-      setAllParticipants(prev => new Map(prev).set(newSocket.id, { name: localParticipantNameRef.current }));
+      setAllParticipants(new Map([[newSocket.id, { name: localParticipantNameRef.current }]]));
       newSocket.emit('join-room', { roomId, name: localParticipantNameRef.current });
     });
 
