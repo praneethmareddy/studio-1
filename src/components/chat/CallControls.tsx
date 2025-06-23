@@ -5,8 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Mic, MicOff, Video as VideoIcon, VideoOff as VideoIconOff, PhoneOff, ScreenShare, ScreenShareOff, Smile } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
-
 
 interface CallControlsProps {
   isMicEnabled: boolean;
@@ -18,7 +16,6 @@ interface CallControlsProps {
   onLeaveCall: () => void;
   onSendReaction: (emoji: string) => void;
   className?: string;
-  isMobile?: boolean;
 }
 
 const EMOJI_REACTIONS = ['👍', '❤️', '🎉', '😂', '😮', '👏'];
@@ -33,12 +30,10 @@ export default function CallControls({
   onLeaveCall,
   onSendReaction,
   className,
-  isMobile
 }: CallControlsProps) {
   const controlButtonBaseClass = "transition-all duration-200 ease-in-out transform hover:scale-110 rounded-full w-14 h-14 md:w-16 md:h-16 p-0 text-lg shadow-lg active:animate-button-press disabled:transform-none disabled:cursor-not-allowed";
   
   return (
-    <TooltipProvider>
       <div className={cn(
           "flex justify-center items-center gap-3 md:gap-4 p-3 bg-card/70 backdrop-blur-sm rounded-xl shadow-xl border border-border/50", 
           className
@@ -69,30 +64,18 @@ export default function CallControls({
           {isVideoEnabled ? <VideoIcon className="h-6 w-6 md:h-7 md:w-7" /> : <VideoIconOff className="h-6 w-6 md:h-7 md:w-7" />}
         </Button>
         
-        {!isMobile && (
-          <Tooltip>
-              <TooltipTrigger asChild>
-                  {/* A wrapper div is needed for Tooltip to work on a disabled button */}
-                  <div className="relative"> 
-                      <Button
-                          onClick={onToggleScreenShare}
-                          variant={isScreenSharing ? "secondary" : "outline"}
-                          aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
-                          className={cn(
-                              controlButtonBaseClass,
-                              isScreenSharing ? "bg-blue-600 hover:bg-blue-700 text-white" : "border-primary/50 hover:bg-primary/10 text-primary",
-                              "disabled:bg-muted disabled:border-border disabled:text-muted-foreground"
-                          )}
-                          >
-                          {isScreenSharing ? <ScreenShareOff className="h-6 w-6 md:h-7 md:w-7" /> : <ScreenShare className="h-6 w-6 md:h-7 md:w-7" />}
-                      </Button>
-                  </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Screen sharing is only available on desktop browsers.</p>
-              </TooltipContent>
-          </Tooltip>
-        )}
+        <Button
+            onClick={onToggleScreenShare}
+            variant={isScreenSharing ? "secondary" : "outline"}
+            aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
+            className={cn(
+                controlButtonBaseClass,
+                isScreenSharing ? "bg-blue-600 hover:bg-blue-700 text-white" : "border-primary/50 hover:bg-primary/10 text-primary",
+                "disabled:bg-muted disabled:border-border disabled:text-muted-foreground"
+            )}
+            >
+            {isScreenSharing ? <ScreenShareOff className="h-6 w-6 md:h-7 md:w-7" /> : <ScreenShare className="h-6 w-6 md:h-7 md:w-7" />}
+        </Button>
 
         <Popover>
           <PopoverTrigger asChild>
@@ -129,6 +112,5 @@ export default function CallControls({
           <PhoneOff className="h-6 w-6 md:h-7 md:w-7" />
         </Button>
       </div>
-    </TooltipProvider>
   );
 }

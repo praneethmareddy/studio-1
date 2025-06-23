@@ -68,30 +68,43 @@ const rooms = {};
 io.on("connection", (socket) => {
   console.log(`🔌 New connection: ${socket.id}`);
 
-  // Join room
-  socket.on("join-room", async ({ roomId, name }) => {
-    if (!roomId || !name) return;
-
+  // User joins a room channel, but is not yet a "participant" for WebRTC
+  socket.on("join-room", ({ roomId }) => {
     socket.join(roomId);
+    console.log(`✅ Socket ${socket.id} joined channel: ${roomId}`);
+  });
+
+  // User is ready with their media stream and ready for WebRTC
+  socket.on('ready', async ({ roomId, name }) => {
+    if (!roomId || !name) return;
 
     if (!rooms[roomId]) {
       rooms[roomId] = {};
     }
+
+    // Add user to the participant list
     rooms[roomId][socket.id] = { name, isScreenSharing: false };
-    
-    console.log(`✅ ${name} (${socket.id}) joined room: ${roomId}`);
-    
+    console.log(`✅ ${name} (${socket.id}) is ready in room: ${roomId}`);
+
+    // Get other "ready" users
     const otherUsers = Object.keys(rooms[roomId])
       .filter(id => id !== socket.id)
       .map(id => ({ id, ...rooms[roomId][id] }));
 
+    // Send the list of existing participants to the new participant
     socket.emit("existing-users", otherUsers);
-    
+
+    // Fetch chat history now that user is fully in
     if (MONGO_URI) {
-      const messages = await Message.find({ roomId }).sort({ timestamp: 1 });
-      socket.emit("previous-messages", messages.map(m => m.toJSON()));
+      try {
+        const messages = await Message.find({ roomId }).sort({ timestamp: 1 });
+        socket.emit("previous-messages", messages.map(m => m.toJSON()));
+      } catch (e) {
+        console.error("Error fetching previous messages:", e);
+      }
     }
 
+    // Notify other participants that a new user is ready
     socket.to(roomId).emit("user-joined", {
       id: socket.id,
       name,
@@ -155,7 +168,6 @@ io.on("connection", (socket) => {
   socket.on("screen-share-started", ({ roomId }) => {
     if (!rooms[roomId] || !rooms[roomId][socket.id]) return;
 
-    // Check if another user is already sharing their screen
     let currentSharerId = null;
     for (const id in rooms[roomId]) {
         if (rooms[roomId][id].isScreenSharing && id !== socket.id) {
@@ -165,15 +177,12 @@ io.on("connection", (socket) => {
     }
 
     if (currentSharerId) {
-        // Force the current sharer to stop
         io.to(currentSharerId).emit("force-stop-screen-share");
         rooms[roomId][currentSharerId].isScreenSharing = false;
-        // Let others know the old share has stopped
         io.to(roomId).emit("user-screen-share-stopped", { userId: currentSharerId });
         console.log(`✅ Forcing ${rooms[roomId][currentSharerId].name} (${currentSharerId}) to stop screen sharing.`);
     }
 
-    // Start the new screen share
     rooms[roomId][socket.id].isScreenSharing = true;
     socket.to(roomId).emit("user-screen-share-started", { userId: socket.id });
     console.log(`✅ ${rooms[roomId][socket.id].name} (${socket.id}) started screen sharing in room: ${roomId}`);

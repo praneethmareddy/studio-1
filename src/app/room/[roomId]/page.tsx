@@ -119,7 +119,7 @@ function RoomPage() {
     newSocket.on('connect', () => {
       console.log('Socket connected:', newSocket.id);
       setAllParticipants(new Map([[newSocket.id, { name: localParticipantNameRef.current }]]));
-      newSocket.emit('join-room', { roomId, name: localParticipantNameRef.current });
+      newSocket.emit('join-room', { roomId });
     });
 
     const cleanup = () => {
@@ -180,37 +180,30 @@ function RoomPage() {
 
 
   const stopScreenShare = useCallback(() => {
-    if (!cameraVideoTrackRef.current || !localStreamRef.current) return;
+    if (!cameraVideoTrackRef.current || !localStreamRef.current || !isScreenSharing) return;
   
-    const screenVideoTrack = localStreamRef.current.getVideoTracks().find(track => track.getSettings().displaySurface);
-  
+    // Find the screen sharing track to stop it.
+    const screenTrack = localStreamRef.current.getVideoTracks().find(track => track.getSettings().displaySurface);
+    screenTrack?.stop();
+    
+    // Replace the screen track with the camera track for all peer connections.
     peerConnectionsRef.current.forEach(pc => {
       const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
       if (videoSender && cameraVideoTrackRef.current) {
           videoSender.replaceTrack(cameraVideoTrackRef.current);
       }
-      // Audio sender handling is tricky because screen audio is optional.
-      // A simple approach is to always replace with the mic track.
-      if (micAudioTrackRef.current) {
-        const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
-        if (audioSender) audioSender.replaceTrack(micAudioTrackRef.current);
-      }
-    });
-    
-    // Stop and remove screen tracks from the local stream
-    localStreamRef.current.getTracks().forEach(track => {
-        if(track.getSettings().displaySurface || track.id !== micAudioTrackRef.current?.id) {
-            track.stop();
-            localStreamRef.current.removeTrack(track);
-        }
     });
 
-    // Re-add original camera and mic tracks if they are not already there
-    if(cameraVideoTrackRef.current && !localStreamRef.current.getVideoTracks().length) {
-        localStreamRef.current.addTrack(cameraVideoTrackRef.current);
-    }
-     if(micAudioTrackRef.current && !localStreamRef.current.getAudioTracks().length) {
-        localStreamRef.current.addTrack(micAudioTrackRef.current);
+    // Update the local stream to reflect the camera feed again.
+    // First, remove the old screen sharing tracks.
+    localStreamRef.current.getTracks().forEach(track => {
+      if (track.id !== micAudioTrackRef.current?.id && track.id !== cameraVideoTrackRef.current?.id) {
+        localStreamRef.current.removeTrack(track);
+      }
+    });
+    // Add the camera track back if it's not there.
+    if (cameraVideoTrackRef.current && !localStreamRef.current.getVideoTracks().length) {
+      localStreamRef.current.addTrack(cameraVideoTrackRef.current);
     }
   
     setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
@@ -222,13 +215,14 @@ function RoomPage() {
   
     socket?.emit('screen-share-stopped', { roomId });
     
-  }, [socket, roomId, pinnedUserId]);
+  }, [socket, roomId, pinnedUserId, isScreenSharing]);
 
 
   useEffect(() => {
     if (!socket) return;
         
     const callUser = async (peerId: string, peerName: string) => {
+      if (!localStreamRef.current) return;
       const pc = createPeerConnection(peerId, peerName);
       try {
         const offer = await pc.createOffer();
@@ -248,14 +242,11 @@ function RoomPage() {
           if(user.isScreenSharing) {
             setPinnedUserId(user.id);
           }
+          // Call the existing user
+          callUser(user.id, user.name);
         }
       });
       setAllParticipants(prev => new Map([...prev, ...newParticipants]));
-      if(localStreamRef.current) {
-         users.forEach(user => {
-            if (user.id !== socket.id) callUser(user.id, user.name)
-         });
-      }
     };
 
     const handleUserJoined = ({ id: peerId, name: peerName, isScreenSharing }: { id: string; name: string, isScreenSharing: boolean }) => {
@@ -263,10 +254,8 @@ function RoomPage() {
       toast({ title: 'User Joined', description: `${peerName} has entered the room.` });
       setAllParticipants(prev => new Map(prev).set(peerId, { name: peerName }));
       
-      if (localStreamRef.current) {
-        console.log(`Already in call, initiating call to new user ${peerName}`);
-        callUser(peerId, peerName);
-      }
+      console.log(`New user ${peerName} joined, initiating call.`);
+      callUser(peerId, peerName);
 
       if (isScreenSharing) {
         setPinnedUserId(peerId);
@@ -274,6 +263,10 @@ function RoomPage() {
     };
 
     const handleReceiveOffer = async ({ caller, sdp, name: callerName }: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
+      if (!isInCall) {
+        console.warn(`Received offer from ${callerName} but not in call, ignoring.`);
+        return;
+      }
       console.log(`Received offer from ${callerName}`);
       const pc = createPeerConnection(caller, callerName);
       try {
@@ -424,7 +417,7 @@ function RoomPage() {
       socket.off('receive-emoji');
       socket.off('force-stop-screen-share');
     };
-  }, [socket, cleanupPeerConnection, toast, createPeerConnection, pinnedUserId, stopScreenShare]);
+  }, [socket, cleanupPeerConnection, toast, createPeerConnection, pinnedUserId, stopScreenShare, isInCall]);
 
   
   const joinCall = async () => {
@@ -437,22 +430,7 @@ function RoomPage() {
       setLocalStream(stream);
       setIsInCall(true);
       
-      allParticipants.forEach((participant, peerId) => {
-        if (peerId !== socket?.id) {
-          console.log(`Joining call, initiating call to existing user ${participant.name}`);
-          const pc = createPeerConnection(peerId, participant.name);
-          const callUser = async () => {
-            try {
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-              socket?.emit('offer', { target: peerId, sdp: pc.localDescription, name: localParticipantNameRef.current });
-            } catch (e) {
-                console.error(`Error creating offer for ${peerId} in joinCall:`, e);
-            }
-          }
-          callUser();
-        }
-      });
+      socket?.emit('ready', { roomId, name: localParticipantNameRef.current });
       
     } catch (err) {
       console.error('Error accessing media devices.', err);
@@ -481,7 +459,8 @@ function RoomPage() {
     });
 
     setRemoteParticipants(new Map());
-  }, [cleanupPeerConnection, isScreenSharing, stopScreenShare]);
+    router.push('/');
+  }, [cleanupPeerConnection, isScreenSharing, stopScreenShare, router]);
 
   const toggleMic = () => {
     if (localStream) {
@@ -514,11 +493,18 @@ function RoomPage() {
           stopScreenShare();
       } else {
           try {
+              if (!navigator.mediaDevices.getDisplayMedia) {
+                toast({
+                    title: 'Screen Share Not Supported',
+                    description: 'Your browser does not support screen sharing.',
+                    variant: 'destructive',
+                });
+                return;
+              }
               const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
               
               if (!localStreamRef.current) return;
               
-              // Store original tracks if not already stored
               if (!cameraVideoTrackRef.current) cameraVideoTrackRef.current = localStreamRef.current.getVideoTracks()[0];
               if (!micAudioTrackRef.current) micAudioTrackRef.current = localStreamRef.current.getAudioTracks()[0];
 
@@ -532,17 +518,14 @@ function RoomPage() {
                   if (screenAudioTrack) {
                       const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
                       if (audioSender) audioSender.replaceTrack(screenAudioTrack);
+                      else pc.addTrack(screenAudioTrack, screenStream);
                   }
               });
-
-              // Replace tracks in local stream for local preview
-              const currentVideoTrack = localStreamRef.current.getVideoTracks()[0];
-              if(currentVideoTrack) localStreamRef.current.removeTrack(currentVideoTrack);
+              
+              localStreamRef.current.getVideoTracks().forEach(track => localStreamRef.current.removeTrack(track));
               localStreamRef.current.addTrack(screenVideoTrack);
-
               if (screenAudioTrack) {
-                const currentAudioTrack = localStreamRef.current.getAudioTracks()[0];
-                if(currentAudioTrack) localStreamRef.current.removeTrack(currentAudioTrack);
+                localStreamRef.current.getAudioTracks().forEach(track => localStreamRef.current.removeTrack(track));
                 localStreamRef.current.addTrack(screenAudioTrack);
               }
               
@@ -560,7 +543,7 @@ function RoomPage() {
               if (err instanceof Error && err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
                   toast({
                       title: 'Screen Share Error',
-                      description: 'Could not access your screen. Please try again.',
+                      description: 'Could not start screen sharing. Please check permissions and try again.',
                       variant: 'destructive',
                   });
               }
@@ -757,7 +740,6 @@ function RoomPage() {
                 onToggleScreenShare={toggleScreenShare}
                 onSendReaction={handleSendReaction}
                 className="mt-auto mx-auto"
-                isMobile={isMobile}
               />
             </div>
           )}
