@@ -34,6 +34,8 @@ export default function VideoPlayer({
   const playerRef = useRef<HTMLDivElement>(null);
   const [localReactions, setLocalReactions] = useState<Reaction[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const prevReactionsRef = useRef<Reaction[]>([]);
+
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -42,13 +44,25 @@ export default function VideoPlayer({
   }, [stream]);
 
   useEffect(() => {
-      if (reactions.length > 0) {
-        const newReaction = reactions[reactions.length -1];
-        setLocalReactions(prev => [...prev, newReaction]);
+    // Determine which reactions are new since the last render
+    const newReactions = reactions.filter(
+      (r) => !prevReactionsRef.current.some((pr) => pr.id === r.id)
+    );
+
+    if (newReactions.length > 0) {
+      newReactions.forEach((reaction) => {
+        // Add to local state to trigger animation
+        setLocalReactions((current) => [...current, reaction]);
+
+        // Set timeout to remove it from local state after animation
         setTimeout(() => {
-            setLocalReactions(prev => prev.filter(r => r.id !== newReaction.id));
-        }, 2000); // 2s duration for animation
-      }
+          setLocalReactions((current) => current.filter((r) => r.id !== reaction.id));
+        }, 2000); // Animation duration
+      });
+    }
+
+    // Update the ref to the current reactions for the next render
+    prevReactionsRef.current = reactions;
   }, [reactions]);
 
   const handleToggleFullscreen = () => {
@@ -85,7 +99,7 @@ export default function VideoPlayer({
       ref={playerRef}
       className={cn(
         "group overflow-hidden shadow-lg w-full h-full flex flex-col rounded-lg relative bg-muted transition-all duration-300",
-        isScreenSharing
+        isScreenSharing && !isLocal
           ? "border-2 border-accent shadow-glow-accent-sm"
           : isPinned
           ? "border-2 border-primary/70"
@@ -117,10 +131,10 @@ export default function VideoPlayer({
           </div>
         </div>
       ) : (
-        <div className="absolute bottom-2 left-2 flex items-center gap-2 p-1 px-2 bg-black/50 backdrop-blur-sm rounded-lg text-xs text-white">
+        <div className="absolute bottom-2 left-2 flex items-center gap-2 p-1.5 px-2.5 bg-black/50 backdrop-blur-sm rounded-full text-xs text-white">
             <span className="font-medium truncate">{name}</span>
             {isScreenSharing && (
-              <div className="flex items-center gap-1.5 bg-blue-500/80 text-white font-bold px-2 py-0.5 rounded-md">
+              <div className="flex items-center gap-1.5 bg-blue-500/80 text-white font-bold px-2 py-0.5 rounded-full">
                   <ScreenShare className="h-3 w-3" />
                   <span>Presenting</span>
               </div>
