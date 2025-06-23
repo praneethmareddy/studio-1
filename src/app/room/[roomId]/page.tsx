@@ -265,10 +265,6 @@ function RoomPage() {
     };
 
     const handleReceiveOffer = async ({ caller, sdp, name: callerName }: { caller: string, sdp: RTCSessionDescriptionInit, name: string }) => {
-      if (!isInCall) {
-        console.warn(`Received offer from ${callerName} but not in call, ignoring.`);
-        return;
-      }
       console.log(`Received offer from ${callerName}`);
       const pc = createPeerConnection(caller, callerName);
       try {
@@ -419,7 +415,7 @@ function RoomPage() {
       socket.off('receive-emoji');
       socket.off('force-stop-screen-share');
     };
-  }, [socket, cleanupPeerConnection, toast, createPeerConnection, pinnedUserId, stopScreenShare, isInCall]);
+  }, [socket, cleanupPeerConnection, toast, createPeerConnection, pinnedUserId, stopScreenShare]);
 
   
   const joinCall = async () => {
@@ -440,6 +436,18 @@ function RoomPage() {
       localStreamRef.current = stream;
       micAudioTrackRef.current = stream.getAudioTracks()[0];
       cameraVideoTrackRef.current = stream.getVideoTracks()[0];
+      
+      // Add tracks to any existing peer connections that were created before the stream was ready
+      peerConnectionsRef.current.forEach(pc => {
+        stream.getTracks().forEach(track => {
+          try {
+            pc.addTrack(track, stream);
+          } catch (e) {
+            console.error('Error adding track to existing PC:', e);
+          }
+        });
+      });
+
       setLocalStream(stream);
       setIsInCall(true);
       
