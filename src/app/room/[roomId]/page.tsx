@@ -155,16 +155,32 @@ function RoomPage() {
 
       pc.ontrack = (event) => {
         console.log(`Received remote track from ${peerName} (${peerId})`);
+        const { track } = event;
+
         setRemoteParticipants(prev => {
-            const existingParticipant = prev.get(peerId);
-            return new Map(prev).set(peerId, { 
-                id: peerId, 
-                name: peerName, 
-                stream: event.streams[0],
-                isAudioEnabled: existingParticipant?.isAudioEnabled ?? true,
-                isVideoEnabled: existingParticipant?.isVideoEnabled ?? true,
-                isScreenSharing: existingParticipant?.isScreenSharing ?? false,
-            });
+            const newParticipants = new Map(prev);
+            let participant = newParticipants.get(peerId);
+
+            if (!participant) {
+                // First track for this user, create a new participant object
+                participant = {
+                    id: peerId,
+                    name: peerName,
+                    stream: new MediaStream([track]),
+                    isAudioEnabled: true,
+                    isVideoEnabled: true,
+                    isScreenSharing: false,
+                };
+            } else {
+                // Existing user, add the new track to their stream
+                // We create a new stream object to ensure React detects the change
+                const newStream = new MediaStream(participant.stream);
+                newStream.addTrack(track);
+                participant = { ...participant, stream: newStream };
+            }
+
+            newParticipants.set(peerId, participant);
+            return newParticipants; // Return a new Map object
         });
       };
       
@@ -424,7 +440,7 @@ function RoomPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       
       // Enumerate devices to enable camera flipping on mobile
-      if (isMobile && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(device => device.kind === 'videoinput');
         setVideoDevices(videoInputs);
@@ -441,7 +457,9 @@ function RoomPage() {
       peerConnectionsRef.current.forEach(pc => {
         stream.getTracks().forEach(track => {
           try {
-            pc.addTrack(track, stream);
+            if (!pc.getSenders().find(s => s.track?.id === track.id)) {
+               pc.addTrack(track, stream);
+            }
           } catch (e) {
             console.error('Error adding track to existing PC:', e);
           }
@@ -821,7 +839,7 @@ function RoomPage() {
                 onToggleScreenShare={toggleScreenShare}
                 onSendReaction={handleSendReaction}
                 onFlipCamera={flipCamera}
-                canFlipCamera={isMobile && videoDevices.length > 1 && !isScreenSharing}
+                canFlipCamera={videoDevices.length > 1 && !isScreenSharing}
                 className="mt-auto mx-auto"
               />
             </div>
