@@ -2,7 +2,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { Mic, MicOff, Video as VideoIcon, VideoOff as VideoIconOff, PhoneOff, ScreenShare, ScreenShareOff, Smile } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff as VideoIconOff, PhoneOff, ScreenShare, ScreenShareOff, Smile, SwitchCamera } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
@@ -15,6 +15,8 @@ interface CallControlsProps {
   onToggleScreenShare: () => void;
   onLeaveCall: () => void;
   onSendReaction: (emoji: string) => void;
+  onFlipCamera: () => void;
+  canFlipCamera: boolean;
   className?: string;
 }
 
@@ -29,6 +31,8 @@ export default function CallControls({
   onToggleScreenShare,
   onLeaveCall,
   onSendReaction,
+  onFlipCamera,
+  canFlipCamera,
   className,
 }: CallControlsProps) {
   const controlButtonBaseClass = "transition-all duration-200 ease-in-out transform hover:scale-110 rounded-full w-14 h-14 md:w-16 md:h-16 p-0 text-lg shadow-lg active:animate-button-press disabled:transform-none disabled:cursor-not-allowed";
@@ -63,6 +67,17 @@ export default function CallControls({
         >
           {isVideoEnabled ? <VideoIcon className="h-6 w-6 md:h-7 md:w-7" /> : <VideoIconOff className="h-6 w-6 md:h-7 md:w-7" />}
         </Button>
+        
+        {canFlipCamera && (
+            <Button
+                onClick={onFlipCamera}
+                variant="outline"
+                aria-label="Flip camera"
+                className={cn(controlButtonBaseClass, "border-primary/50 hover:bg-primary/10 text-primary")}
+            >
+                <SwitchCamera className="h-6 w-6 md:h-7 md:w-7" />
+            </Button>
+        )}
         
         <Button
             onClick={onToggleScreenShare}

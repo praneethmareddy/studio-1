@@ -79,6 +79,8 @@ function RoomPage() {
   
   const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
   const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [currentVideoDeviceId, setCurrentVideoDeviceId] = useState<string | undefined>();
 
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -424,6 +426,17 @@ function RoomPage() {
     setMediaError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      
+      // Enumerate devices to enable camera flipping on mobile
+      if (isMobile && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(device => device.kind === 'videoinput');
+        setVideoDevices(videoInputs);
+        const currentVideoTrack = stream.getVideoTracks()[0];
+        const { deviceId } = currentVideoTrack.getSettings();
+        setCurrentVideoDeviceId(deviceId);
+      }
+
       localStreamRef.current = stream;
       micAudioTrackRef.current = stream.getAudioTracks()[0];
       cameraVideoTrackRef.current = stream.getVideoTracks()[0];
@@ -487,6 +500,66 @@ function RoomPage() {
       socket?.emit('video-state-changed', { roomId, isVideoEnabled: newVideoState });
     }
   };
+
+  const flipCamera = async () => {
+    if (isScreenSharing) {
+        toast({
+            title: "Action not allowed",
+            description: "Cannot flip camera while sharing your screen.",
+            duration: 3000
+        });
+        return;
+    }
+
+    if (!localStreamRef.current || videoDevices.length < 2) {
+        return;
+    }
+
+    const currentDeviceIndex = videoDevices.findIndex(d => d.deviceId === currentVideoDeviceId);
+    const nextDevice = videoDevices[(currentDeviceIndex + 1) % videoDevices.length];
+
+    if (!nextDevice?.deviceId) {
+        return;
+    }
+
+    // Stop the old video track to release the camera for the new one.
+    cameraVideoTrackRef.current?.stop();
+
+    try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+            audio: false, // We only want to replace video
+            video: { deviceId: { exact: nextDevice.deviceId } }
+        });
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        // Replace the track in our local stream reference
+        localStreamRef.current.removeTrack(cameraVideoTrackRef.current!);
+        localStreamRef.current.addTrack(newVideoTrack);
+        cameraVideoTrackRef.current = newVideoTrack;
+
+        // Update all active peer connections with the new video track
+        peerConnectionsRef.current.forEach(pc => {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(newVideoTrack);
+            }
+        });
+
+        // Update the local stream state to re-render our own video player
+        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+        setCurrentVideoDeviceId(nextDevice.deviceId);
+
+    } catch (err) {
+        console.error("Error flipping camera:", err);
+        toast({
+            title: "Could Not Flip Camera",
+            description: "There was an error trying to switch cameras.",
+            variant: "destructive",
+        });
+    }
+  };
+
 
   const toggleScreenShare = async () => {
       if (isScreenSharing) {
@@ -739,6 +812,8 @@ function RoomPage() {
                 onToggleVideo={toggleVideo}
                 onToggleScreenShare={toggleScreenShare}
                 onSendReaction={handleSendReaction}
+                onFlipCamera={flipCamera}
+                canFlipCamera={isMobile && videoDevices.length > 1 && !isScreenSharing}
                 className="mt-auto mx-auto"
               />
             </div>
